@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<custom_gcodes_per_layer>
+<plate>
+<plate_info id="6"/>
+<layer top_z="0.60000002384185791" type="1" extruder="1" color="" extra="" gcode="M400 U1"/>
+<mode value="MultiAsSingle"/>
+</plate>
+<plate>
+<plate_info id="7"/>
+<layer top_z="1" type="1" extruder="1" color="" extra="" gcode="M400 U1"/>
+<mode value="MultiAsSingle"/>
+</plate>
+</custom_gcodes_per_layer>
