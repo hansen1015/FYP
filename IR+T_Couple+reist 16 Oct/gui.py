@@ -74,6 +74,7 @@ class App:
         self.t0 = time.time()
         self.tc_now, self.tc_time = NAN, 0.0
         self.times, self.ir, self.tc, self.res, self.pwm = [], [], [], [], []
+        self.volt, self.cur = [], []
         self.log = []  # full history for the CSV (the plot lists get trimmed)
         self.cfg = self.load_settings()
 
@@ -117,7 +118,7 @@ class App:
         f.pack(fill="x", padx=8)
         self.read_lbl = {}
         for key, title in (("ir", "IR temp"), ("tc", "Thermocouple"), ("res", "Resistance"),
-                           ("pwm", "PWM")):
+                           ("volt", "Voltage"), ("cur", "Current"), ("pwm", "PWM")):
             box = ttk.LabelFrame(f, text=title)
             box.pack(side="left", expand=True, fill="x", padx=4)
             lbl = ttk.Label(box, text="--", font=("TkDefaultFont", 20, "bold"), anchor="center")
@@ -125,18 +126,23 @@ class App:
             self.read_lbl[key] = lbl
 
     def _build_plot(self):
-        self.fig = Figure(figsize=(8, 5), dpi=100)
-        self.ax_t, self.ax_r, self.ax_p = self.fig.subplots(3, 1, sharex=True)
+        self.fig = Figure(figsize=(8, 6), dpi=100)
+        self.ax_t, self.ax_r, self.ax_v, self.ax_p = self.fig.subplots(4, 1, sharex=True)
+        self.ax_i = self.ax_v.twinx()
         self.ax_t.set_ylabel("Temp (°C)")
         self.ax_r.set_ylabel("Resistance (Ω)")
+        self.ax_v.set_ylabel("Voltage (V)", color="#911eb4")
+        self.ax_i.set_ylabel("Current (mA)", color="#008080")
         self.ax_p.set_ylabel("PWM (%)")
         self.ax_p.set_xlabel("Time (s)")
         self.ax_p.set_ylim(-5, 105)
-        for ax in (self.ax_t, self.ax_r, self.ax_p):
+        for ax in (self.ax_t, self.ax_r, self.ax_v, self.ax_p):
             ax.grid(True, alpha=0.3)
         self.ln_ir, = self.ax_t.plot([], [], color="#e6194b", label="IR")
         self.ln_tc, = self.ax_t.plot([], [], color="#4363d8", label="Thermocouple")
         self.ln_res, = self.ax_r.plot([], [], color="#3cb44b")
+        self.ln_volt, = self.ax_v.plot([], [], color="#911eb4")
+        self.ln_cur, = self.ax_i.plot([], [], color="#008080")
         self.ln_pwm, = self.ax_p.plot([], [], color="#f58231")
         self.ln_sp_t, = self.ax_t.plot([], [], "k--", alpha=0.6, label="Setpoint")
         self.ln_sp_r, = self.ax_r.plot([], [], "k--", alpha=0.6)
@@ -307,7 +313,7 @@ class App:
     # ---------- data ----------
     def clear_data(self):
         self.t0 = time.time()
-        for a in (self.times, self.ir, self.tc, self.res, self.pwm, self.log):
+        for a in (self.times, self.ir, self.tc, self.res, self.pwm, self.volt, self.cur, self.log):
             a.clear()
 
     def handle(self, key, line):
@@ -331,12 +337,16 @@ class App:
         self.tc.append(self.tc_now if fresh else NAN)
         self.res.append(d["ohm"])
         self.pwm.append(d["pwm"])
+        self.volt.append(d["volt"])
+        self.cur.append(d["ma"])
         self.auto_var.set(bool(d["auto"]))  # board drops to manual if the PC goes quiet
         self.log.append([f"{self.times[-1]:.1f}", datetime.now().isoformat(timespec="seconds"),
                          d["ir"], self.tc[-1], d["ohm"], d["volt"], d["ma"], d["pwm"],
                          d["auto"], d["src"]])
         self.read_lbl["ir"].config(text=f"{d['ir']:.2f} °C")
         self.read_lbl["res"].config(text=f"{d['ohm']:.2f} Ω")
+        self.read_lbl["volt"].config(text=f"{d['volt']:.3f} V")
+        self.read_lbl["cur"].config(text=f"{d['ma']:.2f} mA")
         self.read_lbl["pwm"].config(text=f"{d['pwm']:.1f} %")
 
     def tick(self):
@@ -365,12 +375,14 @@ class App:
         tmax = self.times[-1]
         tmin = max(0, tmax - win)
         while len(self.times) > 1 and self.times[0] < tmin - win:  # bound memory
-            for a in (self.times, self.ir, self.tc, self.res, self.pwm):
+            for a in (self.times, self.ir, self.tc, self.res, self.pwm, self.volt, self.cur):
                 a.pop(0)
         self.ln_ir.set_data(self.times, self.ir)
         self.ln_tc.set_data(self.times, self.tc)
         self.ln_res.set_data(self.times, self.res)
         self.ln_pwm.set_data(self.times, self.pwm)
+        self.ln_volt.set_data(self.times, self.volt)
+        self.ln_cur.set_data(self.times, self.cur)
 
         # setpoint line only while the PID is running on that input
         s = self.src_var.get()
@@ -386,7 +398,8 @@ class App:
         extra_t = [sp] if sp is not None and s < 2 else []
         extra_r = [sp] if sp is not None and s == 2 else []
         for ax, series in ((self.ax_t, [self.ir[i0:], self.tc[i0:], extra_t]),
-                           (self.ax_r, [self.res[i0:], extra_r])):
+                           (self.ax_r, [self.res[i0:], extra_r]),
+                           (self.ax_v, [self.volt[i0:]]), (self.ax_i, [self.cur[i0:]])):
             vis = [v for ser in series for v in ser if math.isfinite(v)]
             if vis:
                 lo, hi = min(vis), max(vis)

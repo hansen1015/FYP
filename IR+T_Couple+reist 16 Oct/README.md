@@ -6,7 +6,7 @@ One GUI that reads two boards and runs a heater PID on any of three inputs.
 |---|---|
 | [esp_board/](esp_board) | ESP32-S3 SuperMini. INA3221 resistance (ch3), GY-906 IR temperature, MOSFET heater PWM on GPIO8, PID. |
 | [thermocouple_board/](thermocouple_board) | ESP32-C3 SuperMini. Reads MAX6675 thermocouple 1 only (SCK 5, SO 6, CS1 20). No heaters. |
-| [gui.py](gui.py) | Tk/matplotlib GUI: live readouts and plots, PID settings, CSV + screenshot. |
+| [gui.py](gui.py) | Tk/matplotlib GUI: live readouts (IR, thermocouple, resistance, voltage, current, PWM) and plots, PID settings, CSV + screenshot. |
 
 Both boards print one line every 500 ms. The GUI forwards the thermocouple value to the ESP board
 (`tc <degC>`), so the PID can use it as an input.
