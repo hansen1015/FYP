@@ -2,7 +2,7 @@
 """
 Live GUI for two boards:
   ESP board (esp_board/)          : IR temp, resistance, heater PWM + PID
-  Thermocouple board (thermocouple_board/): thermocouple 5 only
+  Thermocouple board (thermocouple_board/): thermocouple 1 only
 
 The thermocouple reading is forwarded to the ESP board ("tc <degC>") so the
 heater PID can also use it as its input. One PID runs at a time; pick its input
@@ -32,7 +32,7 @@ BAUD = 115200
 NAN = float("nan")
 SRC_NAMES = ["IR temp (°C)", "Thermocouple (°C)", "Resistance (Ω)"]
 SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "5", "0.05", "0"), ("0", "0.5", "0", "0")]
-TC_RE = re.compile(r"TC5:\s*(NC|-?\d+(?:\.\d+)?)")
+TC_RE = re.compile(r"TC1:\s*(NC|-?\d+(?:\.\d+)?)")
 TC_STALE_S = 3.0  # matches TC_TIMEOUT_MS in the ESP firmware
 UPDATE_MS = 500
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -455,8 +455,8 @@ class App:
 if __name__ == "__main__":
     assert parse_data("DATA 1000 12.000 80.0 960.0 150.00 24.00 31.50 25.5 1 2")["ohm"] == 150.0
     assert math.isnan(parse_data("DATA 1 0.0 0.0 0.0 nan 24.0 -nan 0.0 0 0")["ir"])
-    assert parse_data("garbage") is None and math.isnan(parse_tc("TC5: NC"))
-    assert parse_tc("TC5: 24.50") == 24.5
+    assert parse_data("garbage") is None and math.isnan(parse_tc("TC1: NC"))
+    assert parse_tc("TC1: 24.50") == 24.5
     root = tk.Tk()
     App(root)
     root.mainloop()
