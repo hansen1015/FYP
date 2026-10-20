@@ -51,7 +51,7 @@ const float BUS_VOLTS_PER_LSB = 0.008f;     // 8mV
 #define HEATER_PWM_FREQ_HZ 1000
 #define HEATER_MAX_SAFE_TEMP_C 80.0f  // IR above this forces the heater off in every mode
 #define TC_TIMEOUT_MS 3000            // src 1: no "tc" update for this long -> heater off
-#define MIN_PWM_PCT 2.0f              // PID and manual never drive below this (resistance stays measurable); 0 = off
+#define MIN_PWM_PCT 4.0f              // PID and manual never drive below this (resistance stays measurable); 0 = off
 #define HOST_TIMEOUT_MS 2000
 #define PWM_BITS 12                   // finer than 8 bit
 #define LOOP_MS 200
