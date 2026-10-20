@@ -3,7 +3,7 @@
  *
  * Wiring: SCK -> GPIO 5, SO -> GPIO 6, CS1 -> GPIO 20, VCC -> 3.3V, GND -> GND
  *
- * Serial out (115200), one line every 500 ms:  "TC1: 24.50"  or  "TC1: NC" (open)
+ * Serial out (115200), one line every 200 ms:  "TC1: 24.50"  or  "TC1: NC" (open)
  */
 
 #include <Arduino.h>
@@ -14,8 +14,8 @@ const uint8_t CS_PIN = 20;  // thermocouple 1
 // All 5 modules share SCK/SO, so the unused CS lines must idle high or they fight on SO.
 const uint8_t ALL_CS_PINS[] = {20, 10, 9, 8, 7};
 
-// MAX6675 needs 0.17-0.22 s per conversion; reading faster returns stale data.
-const uint32_t LOOP_MS = 500;
+// MAX6675 needs 0.17-0.22 s per conversion; 200 ms is at the limit, so a reading can repeat.
+const uint32_t LOOP_MS = 200;
 
 double readThermocouple() {
   digitalWrite(CS_PIN, LOW);

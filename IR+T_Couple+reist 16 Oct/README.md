@@ -8,7 +8,7 @@ One GUI that reads two boards and runs a heater PID on any of three inputs.
 | [thermocouple_board/](thermocouple_board) | ESP32-C3 SuperMini. Reads MAX6675 thermocouple 1 only (SCK 5, SO 6, CS1 20). No heaters. |
 | [gui.py](gui.py) | Tk/matplotlib GUI: live readouts (IR, thermocouple, resistance, voltage, current, PWM) and plots, PID settings, CSV + screenshot. |
 
-Both boards print one line every 500 ms. The GUI forwards the thermocouple value to the ESP board
+Both boards print one line every 200 ms. The GUI forwards the thermocouple value to the ESP board
 (`tc <degC>`), so the PID can use it as an input.
 
 ## Run
@@ -37,7 +37,7 @@ Pick a port for each board, press **Connect**. Open order doesn't matter. The po
 ## Safety
 
 - IR >= 80 °C forces the heater off in every mode (needs a working IR sensor).
-- The heater is 0 at boot. The GUI sends a heartbeat every 500 ms; if the board hears nothing for
+- The heater is 0 at boot. The GUI sends a heartbeat every 200 ms; if the board hears nothing for
   2 s it turns the PID off and the PWM to 0.
 - PID on the thermocouple: no thermocouple update for 3 s (open probe, board unplugged) = heater off.
 - The output never goes below 2 % in PID mode or manual mode (except an explicit 0), so the resistance
@@ -61,4 +61,4 @@ ESP board in: `pwm <0-100>`, `auto <0|1>`, `src <0-2>`, `sp <src> <v>`, `pid <sr
 
 - Shunt resistor (7.9 Ω), pins and the 80 °C limit are in `esp_board/src/main.cpp`.
 - Resistance is only valid while current flows through the heater; it can be noisy with PWM.
-- PID runs at 500 ms, so gains from the old 200 ms code need retuning.
+- Everything runs at 200 ms. The MAX6675 converts in 0.17-0.22 s, so a thermocouple value can occasionally repeat.

@@ -7,7 +7,7 @@
  * e = setpoint - PV (heater heats when PV is below setpoint). Nothing is saved to flash:
  * the PC GUI pushes the settings after connecting. After a reset the heater is off / manual.
  *
- * Serial out (115200), every 500 ms:
+ * Serial out (115200), every 200 ms:
  *   DATA <ms> <V> <mA> <mW> <ohm> <ambient C> <IR C> <pwm %> <auto 0/1> <src 0-2>
  *   CFG <src> <kp> <ki> <kd> <sp>        (reply to "get")
  *   OK ... / ERR ...
@@ -54,7 +54,7 @@ const float BUS_VOLTS_PER_LSB = 0.008f;     // 8mV
 #define MIN_PWM_PCT 2.0f              // PID and manual never drive below this (resistance stays measurable); 0 = off
 #define HOST_TIMEOUT_MS 2000
 #define PWM_BITS 12                   // finer than 8 bit
-#define LOOP_MS 500
+#define LOOP_MS 200
 
 enum Src { SRC_IR, SRC_TC, SRC_RES, NUM_SRC };
 
