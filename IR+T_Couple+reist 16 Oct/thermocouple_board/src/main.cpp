@@ -1,16 +1,16 @@
 /*
- * ESP32-C3 SuperMini + MAX6675 thermocouple 1 only (read-only; no heaters here).
+ * ESP32-C3 SuperMini + MAX6675 thermocouple 5 only (read-only; no heaters here).
  *
- * Wiring: SCK -> GPIO 5, SO -> GPIO 6, CS1 -> GPIO 20, VCC -> 3.3V, GND -> GND
+ * Wiring: SCK -> GPIO 5, SO -> GPIO 6, CS5 -> GPIO 7, VCC -> 3.3V, GND -> GND
  *
- * Serial out (115200), one line every 500 ms:  "TC1: 24.50"  or  "TC1: NC" (open)
+ * Serial out (115200), one line every 500 ms:  "TC5: 24.50"  or  "TC5: NC" (open)
  */
 
 #include <Arduino.h>
 
 const uint8_t SCK_PIN = 5;
 const uint8_t SO_PIN = 6;
-const uint8_t CS_PIN = 20;
+const uint8_t CS_PIN = 7;
 
 // MAX6675 needs 0.17-0.22 s per conversion; reading faster returns stale data.
 const uint32_t LOOP_MS = 500;
@@ -40,8 +40,8 @@ void setup() {
 void loop() {
   static uint32_t next = millis();
   double t = readThermocouple();
-  if (isnan(t)) Serial.println("TC1: NC");
-  else Serial.printf("TC1: %.2f\n", t);
+  if (isnan(t)) Serial.println("TC5: NC");
+  else Serial.printf("TC5: %.2f\n", t);
 
   next += LOOP_MS;
   int32_t wait = (int32_t)(next - millis());

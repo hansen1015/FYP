@@ -5,7 +5,7 @@ One GUI that reads two boards and runs a heater PID on any of three inputs.
 | Part | What it does |
 |---|---|
 | [esp_board/](esp_board) | ESP32-S3 SuperMini. INA3221 resistance (ch3), GY-906 IR temperature, MOSFET heater PWM on GPIO8, PID. |
-| [thermocouple_board/](thermocouple_board) | ESP32-C3 SuperMini. Reads MAX6675 thermocouple 1 only (SCK 5, SO 6, CS1 20). No heaters. |
+| [thermocouple_board/](thermocouple_board) | ESP32-C3 SuperMini. Reads MAX6675 thermocouple 5 only (SCK 5, SO 6, CS5 7). No heaters. |
 | [gui.py](gui.py) | Tk/matplotlib GUI: live readouts (IR, thermocouple, resistance, voltage, current, PWM) and plots, PID settings, CSV + screenshot. |
 
 Both boards print one line every 500 ms. The GUI forwards the thermocouple value to the ESP board
@@ -54,7 +54,7 @@ Pick a port for each board, press **Connect**. Open order doesn't matter. The po
 
 ESP board out: `DATA <ms> <V> <mA> <mW> <ohm> <ambient C> <IR C> <pwm %> <pid 0/1> <src 0-2>`
 ESP board in: `pwm <0-100>`, `auto <0|1>`, `src <0-2>`, `sp <src> <v>`, `pid <src> <kp> <ki> <kd>`,
-`tc <degC>`, `hb`, `get`. Thermocouple board out: `TC1: 24.50` or `TC1: NC`.
+`tc <degC>`, `hb`, `get`. Thermocouple board out: `TC5: 24.50` or `TC5: NC`.
 `src`: 0 = IR, 1 = thermocouple, 2 = resistance.
 
 ## Notes
