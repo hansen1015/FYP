@@ -21,7 +21,7 @@ import threading
 import time
 from datetime import datetime
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import serial
 import serial.tools.list_ports
@@ -38,6 +38,10 @@ UPDATE_MS = 200
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "output")
 SETTINGS = os.path.join(HERE, "gui_settings.json")
+SCRIPT_DIR = os.path.join(HERE, "scripts")
+EXAMPLE_SCRIPT = os.path.join(SCRIPT_DIR, "example.json")
+SCRIPT_INPUTS = {"ir": 0, "tc": 1, "res": 2}
+MAX_TEMP_TARGET = 79.0  # the ESP board cuts the heater at 80 degC
 CSV_HEADER = ["serial_number", "time_s", "timestamp", "ir_C", "thermocouple_C", "resistance_ohm", "voltage_V",
               "current_mA", "pwm_pct", "pid_auto", "pid_input"]
 
@@ -62,6 +66,45 @@ def parse_tc(line):
     return NAN if m.group(1) == "NC" else float(m.group(1))
 
 
+def parse_script(text):
+    """JSON text -> list of (start_s, end_s, src 0-2, target); raises ValueError with a readable message."""
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise ValueError(f"Not valid JSON: {e}")
+    rows = data.get("segments") if isinstance(data, dict) else data
+    if not isinstance(rows, list) or not rows:
+        raise ValueError('Need a non-empty "segments" list')
+    segs, prev_end = [], 0.0
+    for n, row in enumerate(rows, 1):
+        try:
+            start, end, target = (float(row[k]) for k in ("start", "end", "target"))
+            src = SCRIPT_INPUTS[str(row["input"]).lower()]
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(f'Segment {n}: needs numbers "start", "end", "target" and '
+                             f'"input" (ir, tc or res)')
+        if not all(map(math.isfinite, (start, end, target))) or start < 0 or end <= start:
+            raise ValueError(f"Segment {n}: need 0 <= start < end")
+        if start < prev_end:
+            raise ValueError(f"Segment {n}: starts before the previous segment ends")
+        if src < 2 and target > MAX_TEMP_TARGET:
+            raise ValueError(f"Segment {n}: temperature target must be <= {MAX_TEMP_TARGET:g} C")
+        if src == 2 and target <= 0:
+            raise ValueError(f"Segment {n}: resistance target must be > 0")
+        segs.append((start, end, src, target))
+        prev_end = end
+    return segs
+
+
+def segment_at(segs, t):
+    """Latest segment that has started by t (so a gap keeps the previous one); None before the first."""
+    cur = None
+    for s in segs:
+        if s[0] <= t:
+            cur = s
+    return cur
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -77,11 +120,13 @@ class App:
         self.volt, self.cur = [], []
         self.log = []  # full history for the CSV (the plot lists get trimmed)
         self.cfg = self.load_settings()
+        self.script = None  # running script: {segs, t0, cur}
 
         self._build_ports()
         self._build_readouts()
         self._build_plot()
         self._build_control()
+        self._build_script_editor()
         self.status = tk.StringVar(value="Disconnected")
         ttk.Label(root, textvariable=self.status, anchor="w").pack(fill="x", padx=8, pady=(0, 4))
 
@@ -188,6 +233,40 @@ class App:
         ttk.Spinbox(row, from_=0, to=100, increment=1, width=5, textvariable=self.pwm_var).pack(side="left")
         ttk.Button(row, text="Set", command=self.send_pwm).pack(side="left")
         ttk.Button(side, text="ALL OFF", command=self.all_off).pack(pady=2)
+        ttk.Button(side, text="Script…", command=self.show_editor).pack(pady=2)
+        self.script_var = tk.StringVar(value="Script: not running")
+        ttk.Label(side, textvariable=self.script_var).pack()
+
+    def _build_script_editor(self):
+        w = self.editor = tk.Toplevel(self.root)
+        w.title("Target script (JSON)")
+        w.geometry("560x460")
+        w.protocol("WM_DELETE_WINDOW", w.withdraw)
+        w.withdraw()
+        ttk.Label(w, justify="left", text=(
+            'Times in seconds. "input": ir | tc | res. A gap between segments keeps the previous\n'
+            "target; after the last segment the PID stops and the heater turns off.")
+        ).pack(anchor="w", padx=8, pady=4)
+        bar = ttk.Frame(w)
+        bar.pack(fill="x", padx=8)
+        for text, cmd in (("Open…", self.open_script), ("Save…", self.save_script),
+                          ("Run script", self.start_script), ("Stop", lambda: self.stop_script(off=True))):
+            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=2)
+        ttk.Label(w, textvariable=self.script_var).pack(anchor="w", padx=8)
+        self.script_text = tk.Text(w, wrap="none", undo=True, font=("TkFixedFont", 10))
+        self.script_text.pack(fill="both", expand=True, padx=8, pady=6)
+        text = self.cfg.get("script_text")
+        if not text:
+            try:
+                with open(EXAMPLE_SCRIPT) as f:
+                    text = f.read()
+            except OSError:
+                text = '{"segments": []}'
+        self.script_text.insert("1.0", text)
+
+    def show_editor(self):
+        self.editor.deiconify()
+        self.editor.lift()
 
     # ---------- serial ----------
     def refresh_ports(self):
@@ -294,6 +373,7 @@ class App:
             if not self.push_config() or not self.send("auto 1"):
                 self.auto_var.set(False)
         else:
+            self.stop_script()
             self.send("auto 0")
 
     def send_pwm(self):
@@ -302,13 +382,84 @@ class App:
         except (tk.TclError, ValueError):
             return
         if self.send(f"pwm {pct:g}"):
+            self.stop_script()
             self.auto_var.set(False)
 
     def all_off(self):
+        self.stop_script()
         self.pwm_var.set(0)
         self.auto_var.set(False)
         self.send("auto 0")
         self.send("pwm 0")
+
+    # ---------- script ----------
+    def open_script(self):
+        path = filedialog.askopenfilename(parent=self.editor, initialdir=SCRIPT_DIR,
+                                          filetypes=[("JSON", "*.json"), ("All", "*")])
+        if path:
+            with open(path) as f:
+                self.script_text.delete("1.0", "end")
+                self.script_text.insert("1.0", f.read())
+
+    def save_script(self):
+        os.makedirs(SCRIPT_DIR, exist_ok=True)
+        path = filedialog.asksaveasfilename(parent=self.editor, initialdir=SCRIPT_DIR,
+                                            defaultextension=".json",
+                                            filetypes=[("JSON", "*.json")])
+        if path:
+            with open(path, "w") as f:
+                f.write(self.script_text.get("1.0", "end").rstrip() + "\n")
+
+    def start_script(self):
+        try:
+            segs = parse_script(self.script_text.get("1.0", "end"))
+        except ValueError as e:
+            messagebox.showerror("Script error", str(e), parent=self.editor)
+            return
+        if not self.ser["esp"]:
+            messagebox.showerror("Script", "Connect the ESP board first", parent=self.editor)
+            return
+        if not self.push_config():  # gains for all inputs; the script only sets SP + input
+            return
+        self.save_settings()
+        self.script = {"segs": segs, "t0": time.time(), "cur": None}
+        self.run_script()
+
+    def stop_script(self, off=False, why="stopped"):
+        if self.script is None:
+            return
+        self.script = None
+        self.script_var.set(f"Script: {why}")
+        if off:  # heater off, like ALL OFF
+            self.auto_var.set(False)
+            self.send("auto 0")
+            self.send("pwm 0")
+
+    def run_script(self):
+        sc = self.script
+        if sc is None:
+            return
+        if not self.ser["esp"]:
+            self.stop_script(why="stopped (ESP disconnected)")
+            return
+        t = time.time() - sc["t0"]
+        if t > sc["segs"][-1][1]:
+            self.stop_script(off=True, why="finished, heater off")
+            return
+        seg = segment_at(sc["segs"], t)
+        n = sc["segs"].index(seg) + 1 if seg else 0
+        self.script_var.set(f"Script: {t:.1f}s, segment {n}/{len(sc['segs'])}" if seg
+                            else f"Script: waiting for first segment ({t:.1f}s)")
+        if seg is None or seg is sc["cur"]:
+            return
+        sc["cur"] = seg
+        _, _, s, target = seg
+        self.src_var.set(s)  # also drives the setpoint line in the plot
+        self.sp_vars[s].set(f"{target:g}")
+        self.send(f"sp {s} {target:g}")
+        self.send(f"src {s}")
+        self.send("auto 1")
+        self.auto_var.set(True)
 
     # ---------- data ----------
     def clear_data(self):
@@ -360,6 +511,7 @@ class App:
                     self.disconnect(key)
         except queue.Empty:
             pass
+        self.run_script()
         if self.ser["esp"]:
             self.send("hb")  # watchdog: the board turns the heater off without this
         self.redraw()
@@ -437,6 +589,7 @@ class App:
         try:
             data = {"ports": {k: v.get() for k, v in self.port_vars.items()},
                     "src": self.src_var.get(), "serial": self.serial_var.get(), "window": self.window_var.get(),
+                    "script_text": self.script_text.get("1.0", "end").rstrip(),
                     "inputs": [[self.sp_vars[s].get(), *(v.get() for v in self.gain_vars[s])]
                                for s in range(3)]}
             with open(SETTINGS, "w") as f:
@@ -445,6 +598,7 @@ class App:
             pass  # settings are a convenience; never block the GUI
 
     def on_close(self):
+        self.stop_script(off=True)
         self.save_settings()
         for k in ("esp", "tc"):
             if self.ser[k]:
@@ -457,6 +611,18 @@ if __name__ == "__main__":
     assert math.isnan(parse_data("DATA 1 0.0 0.0 0.0 nan 24.0 -nan 0.0 0 0")["ir"])
     assert parse_data("garbage") is None and math.isnan(parse_tc("TC1: NC"))
     assert parse_tc("TC1: 24.50") == 24.5
+    segs = parse_script(open(EXAMPLE_SCRIPT).read())
+    assert len(segs) == 3 and segment_at(segs, 0.5)[3] == 30 and segment_at(segs, 1.05)[3] == 30
+    assert segment_at(segs, 10.5)[2] == 1 and segment_at(segs, 5)[3] == 50
+    for bad in ('{', '{"segments": []}', '[{"start":0,"end":0,"input":"ir","target":30}]',
+                '[{"start":0,"end":5,"input":"x","target":30}]',
+                '[{"start":0,"end":5,"input":"ir","target":95}]',
+                '[{"start":0,"end":5,"input":"ir","target":30},{"start":4,"end":6,"input":"ir","target":30}]'):
+        try:
+            parse_script(bad)
+            raise SystemExit(f"accepted bad script: {bad}")
+        except ValueError:
+            pass
     root = tk.Tk()
     App(root)
     root.mainloop()

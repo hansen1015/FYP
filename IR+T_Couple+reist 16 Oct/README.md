@@ -34,6 +34,26 @@ Pick a port for each board, press **Connect**. Open order doesn't matter. The po
 - **Manual PWM %**: anything from 0 < x < 2 is raised to 2 %; exactly 0 is a real off. Setting it turns the PID off. **ALL OFF** = PID off, PWM 0.
 - Heat when PV < setpoint: `out% = Kp*e + Ki*∫e + Kd*(-dPV/dt)`, `e = SP - PV`, output 0–100 %.
 
+## Target script
+
+**Script…** opens a JSON editor (Open / Save / **Run script** / Stop). It steps the PID target over
+time, switching the PID input per segment. Example ([scripts/example.json](scripts/example.json)):
+
+```json
+{"segments": [
+  {"start": 0,    "end": 1,  "input": "ir", "target": 30},
+  {"start": 1.1,  "end": 10, "input": "ir", "target": 50},
+  {"start": 10.1, "end": 20, "input": "tc", "target": 30}
+]}
+```
+
+- Times are seconds from pressing Run. `input` is `ir`, `tc` or `res`. Targets are flat steps (no ramps).
+- The Kp/Ki/Kd of each input come from the fields in the main window. The script sets only the SP and the input.
+- A gap between segments keeps the previous target. After the last `end` the PID stops and the heater turns off.
+- Temperature targets above 79 °C are rejected. The ESP board must be connected.
+- Stop, ALL OFF, unticking Enable PID, setting a manual PWM, or an ESP disconnect all end the script.
+- The editor text is remembered in `gui_settings.json`. While running, the SP field of the active input shows the script target.
+
 ## Safety
 
 - IR >= 80 °C forces the heater off in every mode (needs a working IR sensor).
