@@ -3,7 +3,7 @@
     {"start": 0,  "end": 50, "input": "ir", "target": 50},
     {"start": 50, "end": 80, "input": "tc", "target": 0},
     {"start": 80, "end": 130, "input": "tc", "target": 45},
-    {"start": 130, "end": 150, "input": "res", "target": 0},
-    {"start": 150, "end": 200, "input": "res", "target": 450},	
+    {"start": 130, "end": 150, "input": "res", "target": 1},
+    {"start": 150, "end": 200, "input": "res", "target": 450}
   ]
 }

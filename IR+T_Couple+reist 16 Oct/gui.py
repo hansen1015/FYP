@@ -109,7 +109,7 @@ class App:
     def __init__(self, root):
         self.root = root
         root.title("IR + Thermocouple + Resistance")
-        root.geometry("1100x900")
+        root.geometry("1300x880")
 
         self.ser = {"esp": None, "tc": None}
         self.stop = {"esp": threading.Event(), "tc": threading.Event()}
@@ -117,16 +117,17 @@ class App:
         self.t0 = time.time()
         self.tc_now, self.tc_time = NAN, 0.0
         self.times, self.ir, self.tc, self.res, self.pwm = [], [], [], [], []
-        self.volt, self.cur = [], []
         self.log = []  # full history for the CSV (the plot lists get trimmed)
         self.cfg = self.load_settings()
         self.script = None  # running script: {segs, t0, cur}
 
         self._build_ports()
         self._build_readouts()
+        self.mid = ttk.Frame(root)  # plot on the left, script editor on the right
+        self.mid.pack(fill="both", expand=True)
+        self._build_script_editor()  # packed first so it keeps its width when the window is narrow
         self._build_plot()
         self._build_control()
-        self._build_script_editor()
         self.status = tk.StringVar(value="Disconnected")
         ttk.Label(root, textvariable=self.status, anchor="w").pack(fill="x", padx=8, pady=(0, 4))
 
@@ -172,29 +173,25 @@ class App:
 
     def _build_plot(self):
         self.fig = Figure(figsize=(8, 6), dpi=100)
-        self.ax_t, self.ax_r, self.ax_v, self.ax_p = self.fig.subplots(4, 1, sharex=True)
-        self.ax_i = self.ax_v.twinx()
+        self.ax_t, self.ax_r, self.ax_p = self.fig.subplots(3, 1, sharex=True)
         self.ax_t.set_ylabel("Temp (°C)")
         self.ax_r.set_ylabel("Resistance (Ω)")
-        self.ax_v.set_ylabel("Voltage (V)", color="#911eb4")
-        self.ax_i.set_ylabel("Current (mA)", color="#008080")
         self.ax_p.set_ylabel("PWM (%)")
         self.ax_p.set_xlabel("Time (s)")
         self.ax_p.set_ylim(-5, 105)
-        for ax in (self.ax_t, self.ax_r, self.ax_v, self.ax_p):
+        for ax in (self.ax_t, self.ax_r, self.ax_p):
             ax.grid(True, alpha=0.3)
         self.ln_ir, = self.ax_t.plot([], [], color="#e6194b", label="IR")
         self.ln_tc, = self.ax_t.plot([], [], color="#4363d8", label="Thermocouple")
         self.ln_res, = self.ax_r.plot([], [], color="#3cb44b")
-        self.ln_volt, = self.ax_v.plot([], [], color="#911eb4")
-        self.ln_cur, = self.ax_i.plot([], [], color="#008080")
         self.ln_pwm, = self.ax_p.plot([], [], color="#f58231")
         self.ln_sp_t, = self.ax_t.plot([], [], "k--", alpha=0.6, label="Setpoint")
         self.ln_sp_r, = self.ax_r.plot([], [], "k--", alpha=0.6)
-        self.ax_t.legend(loc="upper left", ncol=3)
-        self.fig.tight_layout()
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=8)
+        # legend outside the axes, to the right; leave room for it
+        self.ax_t.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0, fontsize=8)
+        self.fig.subplots_adjust(left=0.09, right=0.80, top=0.97, bottom=0.08, hspace=0.12)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.mid)
+        self.canvas.get_tk_widget().pack(side="left", fill="both", expand=True, padx=(8, 4))
 
     def _build_control(self):
         box = ttk.LabelFrame(self.root, text="Heater control (ESP board)")
@@ -233,28 +230,23 @@ class App:
         ttk.Spinbox(row, from_=0, to=100, increment=1, width=5, textvariable=self.pwm_var).pack(side="left")
         ttk.Button(row, text="Set", command=self.send_pwm).pack(side="left")
         ttk.Button(side, text="ALL OFF", command=self.all_off).pack(pady=2)
-        ttk.Button(side, text="Script…", command=self.show_editor).pack(pady=2)
-        self.script_var = tk.StringVar(value="Script: not running")
-        ttk.Label(side, textvariable=self.script_var).pack()
 
     def _build_script_editor(self):
-        w = self.editor = tk.Toplevel(self.root)
-        w.title("Target script (JSON)")
-        w.geometry("560x460")
-        w.protocol("WM_DELETE_WINDOW", w.withdraw)
-        w.withdraw()
-        ttk.Label(w, justify="left", text=(
-            'Times in seconds. "input": ir | tc | res. A gap between segments keeps the previous\n'
-            "target; after the last segment the PID stops and the heater turns off.")
-        ).pack(anchor="w", padx=8, pady=4)
+        w = ttk.LabelFrame(self.mid, text="Target script (JSON)")
+        w.pack(side="right", fill="y", padx=(4, 8), pady=4)
+        self.script_var = tk.StringVar(value="Script: not running")
+        ttk.Label(w, justify="left", wraplength=280, text=(
+            'Times in seconds. "input": ir | tc | res. A gap keeps the previous target; '
+            "after the last segment the PID stops and the heater turns off.")
+        ).pack(anchor="w", padx=6, pady=4)
         bar = ttk.Frame(w)
-        bar.pack(fill="x", padx=8)
+        bar.pack(fill="x", padx=6)
         for text, cmd in (("Open…", self.open_script), ("Save…", self.save_script),
                           ("Run script", self.start_script), ("Stop", lambda: self.stop_script(off=True))):
-            ttk.Button(bar, text=text, command=cmd).pack(side="left", padx=2)
-        ttk.Label(w, textvariable=self.script_var).pack(anchor="w", padx=8)
-        self.script_text = tk.Text(w, wrap="none", undo=True, font=("TkFixedFont", 10))
-        self.script_text.pack(fill="both", expand=True, padx=8, pady=6)
+            ttk.Button(bar, text=text, command=cmd, width=10).pack(side="left", padx=1)
+        ttk.Label(w, textvariable=self.script_var).pack(anchor="w", padx=6, pady=2)
+        self.script_text = tk.Text(w, wrap="word", undo=True, width=34, font=("TkFixedFont", 10))
+        self.script_text.pack(fill="both", expand=True, padx=6, pady=(0, 6))
         text = self.cfg.get("script_text")
         if not text:
             try:
@@ -263,10 +255,6 @@ class App:
             except OSError:
                 text = '{"segments": []}'
         self.script_text.insert("1.0", text)
-
-    def show_editor(self):
-        self.editor.deiconify()
-        self.editor.lift()
 
     # ---------- serial ----------
     def refresh_ports(self):
@@ -394,7 +382,7 @@ class App:
 
     # ---------- script ----------
     def open_script(self):
-        path = filedialog.askopenfilename(parent=self.editor, initialdir=SCRIPT_DIR,
+        path = filedialog.askopenfilename(initialdir=SCRIPT_DIR,
                                           filetypes=[("JSON", "*.json"), ("All", "*")])
         if path:
             with open(path) as f:
@@ -403,7 +391,7 @@ class App:
 
     def save_script(self):
         os.makedirs(SCRIPT_DIR, exist_ok=True)
-        path = filedialog.asksaveasfilename(parent=self.editor, initialdir=SCRIPT_DIR,
+        path = filedialog.asksaveasfilename(initialdir=SCRIPT_DIR,
                                             defaultextension=".json",
                                             filetypes=[("JSON", "*.json")])
         if path:
@@ -414,10 +402,10 @@ class App:
         try:
             segs = parse_script(self.script_text.get("1.0", "end"))
         except ValueError as e:
-            messagebox.showerror("Script error", str(e), parent=self.editor)
+            messagebox.showerror("Script error", str(e))
             return
         if not self.ser["esp"]:
-            messagebox.showerror("Script", "Connect the ESP board first", parent=self.editor)
+            messagebox.showerror("Script", "Connect the ESP board first")
             return
         if not self.push_config():  # gains for all inputs; the script only sets SP + input
             return
@@ -466,7 +454,7 @@ class App:
     # ---------- data ----------
     def clear_data(self):
         self.t0 = time.time()
-        for a in (self.times, self.ir, self.tc, self.res, self.pwm, self.volt, self.cur, self.log):
+        for a in (self.times, self.ir, self.tc, self.res, self.pwm, self.log):
             a.clear()
 
     def handle(self, key, line):
@@ -490,8 +478,6 @@ class App:
         self.tc.append(self.tc_now if fresh else NAN)
         self.res.append(d["ohm"])
         self.pwm.append(d["pwm"])
-        self.volt.append(d["volt"])
-        self.cur.append(d["ma"])
         self.auto_var.set(bool(d["auto"]))  # board drops to manual if the PC goes quiet
         self.log.append([f"{self.times[-1]:.1f}", datetime.now().isoformat(timespec="seconds"),
                          d["ir"], self.tc[-1], d["ohm"], d["volt"], d["ma"], d["pwm"],
@@ -529,14 +515,12 @@ class App:
         tmax = self.times[-1]
         tmin = max(0, tmax - win)
         while len(self.times) > 1 and self.times[0] < tmin - win:  # bound memory
-            for a in (self.times, self.ir, self.tc, self.res, self.pwm, self.volt, self.cur):
+            for a in (self.times, self.ir, self.tc, self.res, self.pwm):
                 a.pop(0)
         self.ln_ir.set_data(self.times, self.ir)
         self.ln_tc.set_data(self.times, self.tc)
         self.ln_res.set_data(self.times, self.res)
         self.ln_pwm.set_data(self.times, self.pwm)
-        self.ln_volt.set_data(self.times, self.volt)
-        self.ln_cur.set_data(self.times, self.cur)
 
         # setpoint line only while the PID is running on that input
         s = self.src_var.get()
@@ -552,8 +536,7 @@ class App:
         extra_t = [sp] if sp is not None and s < 2 else []
         extra_r = [sp] if sp is not None and s == 2 else []
         for ax, series in ((self.ax_t, [self.ir[i0:], self.tc[i0:], extra_t]),
-                           (self.ax_r, [self.res[i0:], extra_r]),
-                           (self.ax_v, [self.volt[i0:]]), (self.ax_i, [self.cur[i0:]])):
+                           (self.ax_r, [self.res[i0:], extra_r])):
             vis = [v for ser in series for v in ser if math.isfinite(v)]
             if vis:
                 lo, hi = min(vis), max(vis)
