@@ -10,7 +10,9 @@
 
 const uint8_t SCK_PIN = 5;
 const uint8_t SO_PIN = 6;
-const uint8_t CS_PIN = 7;
+const uint8_t CS_PIN = 7;  // thermocouple 5
+// All 5 modules share SCK/SO, so the unused CS lines must idle high or they fight on SO.
+const uint8_t ALL_CS_PINS[] = {20, 10, 9, 8, 7};
 
 // MAX6675 needs 0.17-0.22 s per conversion; reading faster returns stale data.
 const uint32_t LOOP_MS = 500;
@@ -32,8 +34,10 @@ void setup() {
   pinMode(SCK_PIN, OUTPUT);
   digitalWrite(SCK_PIN, LOW);
   pinMode(SO_PIN, INPUT);
-  pinMode(CS_PIN, OUTPUT);
-  digitalWrite(CS_PIN, HIGH);
+  for (uint8_t pin : ALL_CS_PINS) {
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, HIGH);
+  }
   delay(500);  // MAX6675 power-up time
 }
 
