@@ -80,6 +80,6 @@ ESP board in: `pwm <0-100>`, `auto <0|1>`, `src <0-2>`, `sp <src> <v>`, `pid <sr
 
 ## Notes
 
-- Shunt resistor (7.9 Ω), pins and the 80 °C limit are in `esp_board/src/main.cpp`.
+- Shunt resistor (2.06 Ω), pins and the 80 °C limit are in `esp_board/src/main.cpp`.
 - Resistance is only valid while current flows through the heater; it can be noisy with PWM.
 - Everything runs at 200 ms. The MAX6675 converts in 0.17-0.22 s, so a thermocouple value can occasionally repeat.
