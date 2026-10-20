@@ -422,6 +422,7 @@ class App:
         if not self.push_config():  # gains for all inputs; the script only sets SP + input
             return
         self.save_settings()
+        self.clear_data()  # fresh graph + CSV (and time 0) for this run
         self.script = {"segs": segs, "t0": time.time(), "cur": None}
         self.run_script()
 
@@ -434,6 +435,7 @@ class App:
             self.auto_var.set(False)
             self.send("auto 0")
             self.send("pwm 0")
+        self.save_outputs()  # every run ends with a CSV + screenshot, even a stopped one
 
     def run_script(self):
         sc = self.script

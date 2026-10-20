@@ -51,6 +51,7 @@ time, switching the PID input per segment. Example ([scripts/example.json](scrip
 - The Kp/Ki/Kd of each input come from the fields in the main window. The script sets only the SP and the input.
 - A gap between segments keeps the previous target. After the last `end` the PID stops and the heater turns off.
 - Temperature targets above 79 °C are rejected. The ESP board must be connected.
+- Run clears the graph and CSV history first. When the script ends, for any reason, the CSV + screenshot are saved automatically (see Saving).
 - Stop, ALL OFF, unticking Enable PID, setting a manual PWM, or an ESP disconnect all end the script.
 - The editor text is remembered in `gui_settings.json`. While running, the SP field of the active input shows the script target.
 
