@@ -31,7 +31,7 @@ Pick a port for each board, press **Connect**. Open order doesn't matter. The po
   Only one PID runs at a time, on the selected input.
 - **Enable PID**: ticked = PID drives the heater. Unticked = manual. It always starts unticked.
 - **Apply PID (all inputs)** sends all three sets of values to the board (Enter in a field does too).
-- **Manual PWM %**: decimals allowed (e.g. 0.1). Setting it turns the PID off. **ALL OFF** = PID off, PWM 0.
+- **Manual PWM %**: anything from 0 < x < 2 is raised to 2 %; exactly 0 is a real off. Setting it turns the PID off. **ALL OFF** = PID off, PWM 0.
 - Heat when PV < setpoint: `out% = Kp*e + Ki*∫e + Kd*(-dPV/dt)`, `e = SP - PV`, output 0–100 %.
 
 ## Safety
@@ -40,8 +40,8 @@ Pick a port for each board, press **Connect**. Open order doesn't matter. The po
 - The heater is 0 at boot. The GUI sends a heartbeat every 500 ms; if the board hears nothing for
   2 s it turns the PID off and the PWM to 0.
 - PID on the thermocouple: no thermocouple update for 3 s (open probe, board unplugged) = heater off.
-- In PID mode the output never goes below 0.1 %, so the resistance can still be measured. The PWM runs
-  at 12 bit / 1 kHz so 0.1 % is 4 counts.
+- The output never goes below 2 % in PID mode or manual mode (except an explicit 0), so the resistance
+  can still be measured. The safety cases above (80 °C, no PC, lost sensor) always give 0.
 
 ## Saving
 

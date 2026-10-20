@@ -185,7 +185,7 @@ class App:
         row = ttk.Frame(side)
         row.pack(pady=2)
         ttk.Label(row, text="Manual PWM %").pack(side="left")
-        ttk.Spinbox(row, from_=0, to=100, increment=0.1, width=5, textvariable=self.pwm_var).pack(side="left")
+        ttk.Spinbox(row, from_=0, to=100, increment=1, width=5, textvariable=self.pwm_var).pack(side="left")
         ttk.Button(row, text="Set", command=self.send_pwm).pack(side="left")
         ttk.Button(side, text="ALL OFF", command=self.all_off).pack(pady=2)
 
