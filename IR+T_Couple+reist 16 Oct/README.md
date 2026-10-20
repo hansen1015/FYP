@@ -31,7 +31,7 @@ Pick a port for each board, press **Connect**. Open order doesn't matter. The po
   Only one PID runs at a time, on the selected input.
 - **Enable PID**: ticked = PID drives the heater. Unticked = manual. It always starts unticked.
 - **Apply PID (all inputs)** sends all three sets of values to the board (Enter in a field does too).
-- **Manual PWM %**: anything from 0 < x < 2 is raised to 4 %; exactly 0 is a real off. Setting it turns the PID off. **ALL OFF** = PID off, PWM 0.
+- **Manual PWM %**: anything from 0 < x < 4 is raised to 4 %; exactly 0 is a real off. Setting it turns the PID off. **ALL OFF** = PID off, PWM 0.
 - Heat when PV < setpoint: `out% = Kp*e + Ki*∫e + Kd*(-dPV/dt)`, `e = SP - PV`, output 0–100 %.
 
 ## Target script
