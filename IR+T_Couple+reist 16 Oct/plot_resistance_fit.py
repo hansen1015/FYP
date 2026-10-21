@@ -26,6 +26,6 @@ for n, r, y in zip(names, R40, Y):
     ax.annotate(n, (r, y), textcoords="offset points", xytext=(6, -12))
 xs = np.array([R40.min() - 10, R40.max() + 10])
 ax.plot(xs, m * xs + b, "k--", label=f"y = {m:.3f}·R {b:+.1f}   (R² = {r2:.2f})")
-ax.set(xlabel="Resistance at T ≈ 40 s (Ω)", ylabel="(dR/dt) / P at PWM 100%  (Ω/s/W)")
+ax.set(xlabel="Resistance at 50 °C (Ω)", ylabel="(dR/dt) / P at PWM 100%  (Ω/s/W)")
 ax.grid(alpha=.3); ax.legend()
 fig.tight_layout(); fig.savefig("resistance_fit.png", dpi=150)
