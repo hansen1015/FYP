@@ -14,18 +14,18 @@ for f in sorted(glob.glob(f"{D}/G5-[1-4]_*.csv")):  # G5-5 left out as an outlie
     names.append(f.split("/")[-1][:4]); R40.append(w[:, 1].mean())
     Y.append(np.polyfit(d[:, 0], d[:, 1], 1)[0] / P[k].mean())
 R40, Y = np.array(R40), np.array(Y)
-m, b = np.polyfit(R40, Y, 1)
+m, b = np.polyfit(Y, R40, 1)
 r2 = np.corrcoef(R40, Y)[0, 1] ** 2
 for n, r, y in zip(names, R40, Y):
     print(f"{n}  R40={r:.1f}  (dR/dt)/P={y:.0f}  ratio={y/r:.3f}")
-print(f"fit: y = {m:.3f}*R {b:+.1f}, R^2={r2:.2f}")
+print(f"fit: R = {m:.3f}*x {b:+.1f}, R^2={r2:.2f}")
 
 fig, ax = plt.subplots(figsize=(7, 5))
-ax.scatter(R40, Y, color=[f"C{i}" for i in range(len(names))], zorder=3)
+ax.scatter(Y, R40, color=[f"C{i}" for i in range(len(names))], zorder=3)
 for n, r, y in zip(names, R40, Y):
-    ax.annotate(n, (r, y), textcoords="offset points", xytext=(6, -12))
-xs = np.array([R40.min() - 10, R40.max() + 10])
-ax.plot(xs, m * xs + b, "k--", label=f"y = {m:.3f}·R {b:+.1f}   (R² = {r2:.2f})")
-ax.set(xlabel="Resistance at 50 °C (Ω)", ylabel="(dR/dt) / P at PWM 100%  (Ω/s/W)")
+    ax.annotate(n, (y, r), textcoords="offset points", xytext=(6, -12))
+xs = np.array([Y.min() - 5, Y.max() + 5])
+ax.plot(xs, m * xs + b, "k--", label=f"R = {m:.3f}·x {b:+.1f}   (R² = {r2:.2f})")
+ax.set(xlabel="(dR/dt) / P at PWM 100%  (Ω/s/W)", ylabel="Resistance at 50 °C (Ω)")
 ax.grid(alpha=.3); ax.legend()
 fig.tight_layout(); fig.savefig("resistance_fit.png", dpi=150)
