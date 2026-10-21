@@ -5,7 +5,7 @@ import numpy as np
 
 D = "output (26-10-20)"
 names, R40, Y = [], [], []
-for f in sorted(glob.glob(f"{D}/G5-*.csv")):
+for f in sorted(glob.glob(f"{D}/G5-[1-4]_*.csv")):  # G5-5 left out as an outlier
     a = np.array([[float(x[k]) for k in ("time_s", "resistance_ohm", "pwm_pct", "voltage_V", "current_mA")] for x in csv.DictReader(open(f))])
     w = a[(a[:, 0] >= 39) & (a[:, 0] <= 41)]
     d = a[(a[:, 0] >= 150) & (a[:, 0] <= 153) & (a[:, 2] == 100)]  # PWM 100% ramp
@@ -21,7 +21,7 @@ for n, r, y in zip(names, R40, Y):
 print(f"fit: y = {m:.3f}*R {b:+.1f}, R^2={r2:.2f}")
 
 fig, ax = plt.subplots(figsize=(7, 5))
-ax.scatter(R40, Y, color=[f"C{i}" for i in range(5)], zorder=3)
+ax.scatter(R40, Y, color=[f"C{i}" for i in range(len(names))], zorder=3)
 for n, r, y in zip(names, R40, Y):
     ax.annotate(n, (r, y), textcoords="offset points", xytext=(6, -12))
 xs = np.array([R40.min() - 10, R40.max() + 10])
