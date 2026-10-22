@@ -40,7 +40,7 @@ OUT_DIR = os.path.join(HERE, "output")
 SETTINGS = os.path.join(HERE, "gui_settings.json")
 SCRIPT_DIR = os.path.join(HERE, "scripts")
 EXAMPLE_SCRIPT = os.path.join(SCRIPT_DIR, "example.json")
-SCRIPT_INPUTS = {"ir": 0, "tc": 1, "res": 2}
+SCRIPT_INPUTS = {"ir": 0, "tc": 1, "res": 2, "pwm": 3}
 MAX_TEMP_TARGET = 79.0  # the ESP board cuts the heater at 80 degC
 CSV_HEADER = ["serial_number", "time_s", "timestamp", "ir_C", "thermocouple_C", "resistance_ohm", "voltage_V",
               "current_mA", "pwm_pct", "pid_auto", "pid_input"]
@@ -67,7 +67,7 @@ def parse_tc(line):
 
 
 def parse_script(text):
-    """JSON text -> list of (start_s, end_s, src 0-2, target); raises ValueError with a readable message."""
+    """JSON text -> list of (start_s, end_s, src 0-3 (3 = fixed PWM %), target); raises ValueError with a readable message."""
     try:
         data = json.loads(text)
     except ValueError as e:
@@ -82,7 +82,7 @@ def parse_script(text):
             src = SCRIPT_INPUTS[str(row["input"]).lower()]
         except (KeyError, TypeError, ValueError):
             raise ValueError(f'Segment {n}: needs numbers "start", "end", "target" and '
-                             f'"input" (ir, tc or res)')
+                             f'"input" (ir, tc, res or pwm)')
         if not all(map(math.isfinite, (start, end, target))) or start < 0 or end <= start:
             raise ValueError(f"Segment {n}: need 0 <= start < end")
         if start < prev_end:
@@ -91,6 +91,8 @@ def parse_script(text):
             raise ValueError(f"Segment {n}: temperature target must be <= {MAX_TEMP_TARGET:g} C")
         if src == 2 and target <= 0:
             raise ValueError(f"Segment {n}: resistance target must be > 0")
+        if src == 3 and not 0 <= target <= 100:
+            raise ValueError(f"Segment {n}: PWM target must be 0-100 %")
         segs.append((start, end, src, target))
         prev_end = end
     return segs
@@ -236,7 +238,7 @@ class App:
         w.pack(side="right", fill="y", padx=(4, 8), pady=4)
         self.script_var = tk.StringVar(value="Script: not running")
         ttk.Label(w, justify="left", wraplength=280, text=(
-            'Times in seconds. "input": ir | tc | res. A gap keeps the previous target; '
+            'Times in seconds. "input": ir | tc | res | pwm (target = fixed PWM %, no PID). A gap keeps the previous target; '
             "after the last segment the PID stops and the heater turns off.")
         ).pack(anchor="w", padx=6, pady=4)
         bar = ttk.Frame(w)
@@ -444,6 +446,12 @@ class App:
             return
         sc["cur"] = seg
         _, _, s, target = seg
+        if s == 3:  # fixed PWM: PID off
+            self.auto_var.set(False)
+            self.send("auto 0")
+            self.pwm_var.set(target)
+            self.send(f"pwm {target:g}")
+            return
         self.src_var.set(s)  # also drives the setpoint line in the plot
         self.sp_vars[s].set(f"{target:g}")
         self.send(f"sp {s} {target:g}")
@@ -599,7 +607,8 @@ if __name__ == "__main__":
     segs = parse_script(open(EXAMPLE_SCRIPT).read())
     assert len(segs) == 3 and segment_at(segs, 0.5)[3] == 30 and segment_at(segs, 1.05)[3] == 30
     assert segment_at(segs, 10.5)[2] == 1 and segment_at(segs, 5)[3] == 50
-    for bad in ('{', '{"segments": []}', '[{"start":0,"end":0,"input":"ir","target":30}]',
+    assert parse_script('[{"start":1,"end":3,"input":"pwm","target":100}]')[0][2:] == (3, 100.0)
+    for bad in ('[{"start":0,"end":5,"input":"pwm","target":101}]', '{', '{"segments": []}', '[{"start":0,"end":0,"input":"ir","target":30}]',
                 '[{"start":0,"end":5,"input":"x","target":30}]',
                 '[{"start":0,"end":5,"input":"ir","target":95}]',
                 '[{"start":0,"end":5,"input":"ir","target":30},{"start":4,"end":6,"input":"ir","target":30}]'):
