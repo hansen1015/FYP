@@ -90,17 +90,24 @@ void resetPid(Pid &p) {
 float runPid(Pid &p, float pv, float dt) {
   float e = p.sp - pv;
 
-  // Integral with anti-windup: keep ki*integral within 0..100 %
-  p.integral += e * dt;
-  p.integral = (p.ki > 0) ? constrain(p.integral, 0.0f, 100.0f / p.ki) : 0;
-
   // Derivative on measurement (no kick when the setpoint changes)
   float d = 0;
   if (p.hasLast && dt > 0) d = -(pv - p.lastPv) / dt;
   p.lastPv = pv;
   p.hasLast = true;
 
-  return p.kp * e + p.ki * p.integral + p.kd * d;
+  // Integral with conditional anti-windup: stop integrating while the total output is
+  // saturated and the error pushes further into saturation (clamping ki*I alone still winds up
+  // to 100 % under a big kp*e and then overshoots).
+  float prevI = p.integral;
+  p.integral += e * dt;
+  p.integral = (p.ki > 0) ? constrain(p.integral, 0.0f, 100.0f / p.ki) : 0;
+  float out = p.kp * e + p.ki * p.integral + p.kd * d;
+  if ((out > 100.0f && e > 0) || (out < 0.0f && e < 0)) {
+    p.integral = prevI;
+    out = p.kp * e + p.ki * p.integral + p.kd * d;
+  }
+  return out;
 }
 
 // ---------------- sensors ----------------
