@@ -1,0 +1,17 @@
+{
+  "segments": [
+    {"start": 0,  "end": 50, "input": "ir", "target": 30},
+    {"start": 50, "end": 52, "input": "PWM", "target": 100},
+    {"start": 52, "end": 102, "input": "ir", "target": 35},
+    {"start": 102, "end": 104, "input": "PWM", "target": 100},
+    {"start": 104, "end": 154, "input": "ir", "target": 40},
+    {"start": 154, "end": 156, "input": "PWM", "target": 100},
+    {"start": 156, "end": 206, "input": "ir", "target": 45},
+    {"start": 206, "end": 208, "input": "PWM", "target": 100},
+    {"start": 208, "end": 258, "input": "ir", "target": 50},
+    {"start": 258, "end": 260, "input": "PWM", "target": 100},
+    {"start": 260, "end": 310, "input": "ir", "target": 55},
+    {"start": 310, "end": 312, "input": "PWM", "target": 100},
+    {"start": 312, "end": 350, "input": "PWM", "target": 5}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "segments": [
+    {"start": 0,  "end": 100, "input": "ir", "target": 35},
+    {"start": 100, "end": 200, "input": "ir", "target": 60},
+    {"start": 200, "end": 300, "input": "tc", "target": 40},
+    {"start": 300, "end": 400, "input": "tc", "target": 55}
+  ]
+}
