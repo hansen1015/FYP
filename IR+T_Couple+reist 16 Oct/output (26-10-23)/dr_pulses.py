@@ -1,4 +1,4 @@
-"""dr runs: for each 100% PWM pulse, fit dR/dt and dIR/dt over the pulse and divide by mean electrical power."""
+"""dr runs: for each 100% PWM pulse, fit dR/dt over the pulse and divide by mean electrical power."""
 import glob, numpy as np, pandas as pd
 
 rows = []
@@ -14,11 +14,22 @@ for f in sorted(glob.glob("G5-*_dr_*.csv")):
         t = p.time_s.to_numpy()
         pw = (p.voltage_V * p.current_mA).mean()  # mW
         dR = np.polyfit(t, p.resistance_ohm, 1)[0]
-        dT = np.polyfit(t, p.ir_C, 1)[0]
         rows.append(dict(sample=f.split("_")[0], pulse=len(rows) and sum(r["sample"] == f.split("_")[0] for r in rows) + 1 or 1,
-                         t_start_s=t[0], duration_s=dur, ir_start_C=p.ir_C.iloc[0], R_start_ohm=p.resistance_ohm.iloc[0],
-                         power_mW=pw, dR_dt_ohm_s=dR, dIR_dt_C_s=dT,
-                         dR_dt_per_power=dR / pw, dIR_dt_per_power=dT / pw))
+                         t_start_s=t[0], duration_s=dur, ir_C=p.ir_C.iloc[0], R_start_ohm=p.resistance_ohm.iloc[0],
+                         power_mW=pw, dR_dt_ohm_s=dR,
+                         dR_dt_per_power=dR / pw))
 out = pd.DataFrame(rows)
 out.round(5).to_csv("dr_pulses.csv", index=False)
 print(out.round(3).to_string())
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+fig, axs = plt.subplots(3, 1, sharex=True, figsize=(8, 10))
+for n, g in out.groupby("sample"):
+    for ax, c in zip(axs, ["dR_dt_ohm_s", "power_mW", "dR_dt_per_power"]):
+        ax.plot(g.ir_C, g[c], "o-", label=n)
+for ax, l in zip(axs, ["dR/dt (Ω/s)", "Power (mW)", "(dR/dt) / power (Ω/s/mW)"]):
+    ax.set_ylabel(l); ax.grid(alpha=.3)
+axs[-1].set_xlabel("IR temp at pulse start (°C)"); axs[0].legend()
+fig.tight_layout(); fig.savefig("dr_pulses.png", dpi=150)
