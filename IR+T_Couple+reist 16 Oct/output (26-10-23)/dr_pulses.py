@@ -1,8 +1,12 @@
 """dr runs: for each 100% PWM pulse, fit dR/dt over the pulse and divide by mean electrical power."""
+import sys
+SUF = "_noG5-1" if "--no-g51" in sys.argv else ""  # --no-g51: exclude G5-1, suffix outputs
 import glob, numpy as np, pandas as pd
 
 rows = []
 for f in sorted(glob.glob("G5-*_dr_*.csv")):
+    if SUF and "G5-1" in f:
+        continue
     d = pd.read_csv(f)
     on = (d.pwm_pct >= 99.9).to_numpy()
     grp = np.cumsum(np.diff(on.astype(int), prepend=0) == 1)  # pulse index
@@ -19,7 +23,7 @@ for f in sorted(glob.glob("G5-*_dr_*.csv")):
                          power_mW=pw, dR_dt_ohm_s=dR,
                          dR_dt_per_power=dR / pw))
 out = pd.DataFrame(rows)
-out.round(5).to_csv("dr_pulses.csv", index=False)
+out.round(5).to_csv(f"dr_pulses{SUF}.csv", index=False)
 print(out.round(3).to_string())
 
 import matplotlib
@@ -32,4 +36,4 @@ for n, g in out.groupby("sample"):
 for ax, l in zip(axs, ["dR/dt (Ω/s)", "Power (mW)", "(dR/dt) / power (Ω/s/mW)"]):
     ax.set_ylabel(l); ax.grid(alpha=.3)
 axs[-1].set_xlabel("IR temp at pulse start (°C)"); axs[0].legend()
-fig.tight_layout(); fig.savefig("dr_pulses.png", dpi=150)
+fig.tight_layout(); fig.savefig(f"dr_pulses{SUF}.png", dpi=150)
