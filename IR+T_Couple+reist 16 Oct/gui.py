@@ -41,7 +41,7 @@ SETTINGS = os.path.join(HERE, "gui_settings.json")
 SCRIPT_DIR = os.path.join(HERE, "scripts")
 EXAMPLE_SCRIPT = os.path.join(SCRIPT_DIR, "example.json")
 SCRIPT_INPUTS = {"ir": 0, "tc": 1, "res": 2, "pwm": 3}
-MAX_TEMP_TARGET = 79.0  # the ESP board cuts the heater at 80 degC
+MAX_TEMP_TARGET = 99.0  # the ESP board cuts the heater at 100 degC
 CSV_HEADER = ["serial_number", "time_s", "timestamp", "ir_C", "thermocouple_C", "resistance_ohm", "voltage_V",
               "current_mA", "pwm_pct", "pid_auto", "pid_input"]
 
@@ -610,7 +610,7 @@ if __name__ == "__main__":
     assert parse_script('[{"start":1,"end":3,"input":"pwm","target":100}]')[0][2:] == (3, 100.0)
     for bad in ('[{"start":0,"end":5,"input":"pwm","target":101}]', '{', '{"segments": []}', '[{"start":0,"end":0,"input":"ir","target":30}]',
                 '[{"start":0,"end":5,"input":"x","target":30}]',
-                '[{"start":0,"end":5,"input":"ir","target":95}]',
+                '[{"start":0,"end":5,"input":"ir","target":105}]',
                 '[{"start":0,"end":5,"input":"ir","target":30},{"start":4,"end":6,"input":"ir","target":30}]'):
         try:
             parse_script(bad)
