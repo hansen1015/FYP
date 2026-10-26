@@ -2,9 +2,10 @@
 """
 gui.py plus a "Start prediction test" button that tests the R(60 C) prediction:
 
-  0-2 s    heater 100 % PWM: measure dR/dt, start resistance R0 and mean power P (mW)
-  2-22 s   resistance PID holds the predicted R(60 C); TC and IR are recorded at the end
-  22-72 s  IR PID holds 60 C (20 s to settle + 30 s hold); actual R(60 C) = mean R of the last 10 s
+  0-3 s    heater 5 % PWM: start resistance R0 = mean R of the last second
+  3-5 s    heater 100 % PWM: measure dR/dt and the mean power P (mW)
+  5-25 s   resistance PID holds the predicted R(60 C); TC and IR are recorded at the end
+  25-75 s  IR PID holds 60 C (20 s to settle + 30 s hold); actual R(60 C) = mean R of the last 10 s
 
 then one row is appended to output/prediction.csv. The usual time-series CSV + png are saved too.
 Prediction (fit of output (26-10-23)/dr_scatter_R60_RdRdtP.png, pulses that start at 30-40 C):
@@ -27,7 +28,8 @@ gui.SETTINGS = os.path.join(gui.HERE, "gui_test_settings.json")  # keep gui.py's
 PRED_CSV = os.path.join(gui.OUT_DIR, "prediction.csv")
 PRED_HEADER = ["sample", "dR_dt_ohm_s", "power_at_100pct_pwm_mW", "initial_resistance_ohm",
                "predicted_R60_ohm", "actual_R60_ohm", "ir_at_predicted_R_C", "tc_at_predicted_R_C"]
-T_PULSE, T_RHOLD, T_IR = 2.0, 20.0, 50.0  # phase lengths (s)
+T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 50.0  # phase lengths (s); R0 is read at R0_PWM
+R0_PWM = 5
 T_AVG = 10.0  # actual R60 = mean over the last T_AVG s of the IR hold
 IR_TARGET = 60.0
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
@@ -93,13 +95,13 @@ class TestApp(App):
             return
         if not self.push_config():  # gains / setpoints for all inputs
             return
-        self.clear_data()  # time 0 = start of the pulse
+        self.clear_data()  # time 0 = start of the 5 % PWM R0 read
         self.auto_var.set(False)
         self.send("auto 0")
-        self.pwm_var.set(100)
-        self.send("pwm 100")
+        self.pwm_var.set(R0_PWM)
+        self.send(f"pwm {R0_PWM}")
         self.note(f"--- {self.serial_var.get().strip()}  {datetime.now():%H:%M:%S} ---")
-        self.test = {"phase": "pulse", "ir_pred": float("nan"), "tc_pred": float("nan")}
+        self.test = {"phase": "r0", "ir_pred": float("nan"), "tc_pred": float("nan")}
 
     def rows(self, lo, hi):
         return [r for r in self.log if lo <= float(r[0]) < hi]
@@ -128,17 +130,26 @@ class TestApp(App):
             return
         now = time.time() - self.t0
         self.test_var.set(f"Prediction test: {t['phase']} ({now:.0f} s)")
-        if t["phase"] == "pulse" and now >= T_PULSE:
-            feat = pulse_features(self.rows(0, T_PULSE))
+        if t["phase"] == "r0" and now >= T_R0:
+            r0 = mean([r[4] for r in self.rows(T_R0 - 1, T_R0)])
+            if not r0 > 0:
+                self.abort_test(f"no resistance reading at {R0_PWM} % PWM")
+                return
+            t.update(phase="pulse", r0=r0)
+            self.pwm_var.set(100)
+            self.send("pwm 100")
+        elif t["phase"] == "pulse" and now >= T_R0 + T_PULSE:
+            feat = pulse_features(self.rows(T_R0, T_R0 + T_PULSE))
             if feat is None or feat[0] <= 0:
                 self.abort_test("no usable resistance data in the pulse")
                 return
-            drdt, r0, p = feat
+            drdt, _, p = feat
+            r0 = t["r0"]  # read at 5 % PWM, not the first pulse sample
             pred = predict_r60(drdt, r0, p)
             if not R_OK[0] < pred < R_OK[1]:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
-            t.update(phase="rhold", drdt=drdt, r0=r0, p=p, pred=pred)
+            t.update(phase="rhold", drdt=drdt, p=p, pred=pred)
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
                       f"Power @100%  {p:8.1f} mW\ndR/dt*R0/P   {drdt * r0 / p:8.2f}\n"
                       f"Predicted R60 {pred:7.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
@@ -148,7 +159,7 @@ class TestApp(App):
             self.send("src 2")
             self.send("auto 1")
             self.auto_var.set(True)
-        elif t["phase"] == "rhold" and now >= T_PULSE + T_RHOLD:
+        elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:
             last = self.rows(now - 2, now)  # last 2 s of the resistance hold
             t.update(phase="ir", ir_pred=mean([r[2] for r in last]), tc_pred=mean([r[3] for r in last]))
             self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C, TC {t['tc_pred']:.1f} C\n"
@@ -158,7 +169,7 @@ class TestApp(App):
             self.send(f"sp 0 {IR_TARGET:g}")
             self.send("src 0")
             self.send("auto 1")
-        elif t["phase"] == "ir" and now >= T_PULSE + T_RHOLD + T_IR:
+        elif t["phase"] == "ir" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR:
             self.finish_test(now)
 
     def finish_test(self, now):
