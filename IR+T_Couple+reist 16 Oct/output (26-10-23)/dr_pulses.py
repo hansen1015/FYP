@@ -18,7 +18,7 @@ for f in sorted(glob.glob("G5-*_dr_*.csv")):
         t = p.time_s.to_numpy()
         pw = (p.voltage_V * p.current_mA).mean()  # mW, same window as the fit
         dR = np.polyfit(t, p.resistance_ohm, 1)[0]
-        rows.append(dict(sample=n, pulse=k, t_start_s=t[0], duration_s=t[-1] - t[0], ir_C=p.ir_C.iloc[0],
+        rows.append(dict(sample=n, pulse=k, t_start_s=a, duration_s=b - a, ir_C=p.ir_C.iloc[0],
                          R_start_ohm=p.resistance_ohm.iloc[0], power_mW=pw, dR_dt_ohm_s=dR, dR_dt_per_power=dR / pw))
 out = pd.DataFrame(rows)
 out.round(5).to_csv(f"dr_pulses{SUF}.csv", index=False)
