@@ -29,8 +29,5 @@ for col, lab, fn in [("resistance_ohm", "Resistance (Ω)", "steady_R_vs_IR"), ("
     for i, (n, g) in enumerate(out.groupby("sample")):
         c = f"C{i if not SUF else i + 1}"
         ax.plot(g.ir_C, g[col], "o-", c=c, label=n, ms=5)
-        r2 = g[g.source == "R2"]
-        ax.plot(r2.ir_C, r2[col], "*", c=c, ms=14, mec="k")
-    ax.plot([], [], "k*", ms=12, label="R2 (IR = 60 °C)")
-    ax.set_xlabel("IR temp (°C)"); ax.set_ylabel(lab); ax.grid(alpha=.3); ax.legend()
+    ax.set_xlabel("Temp (°C)"); ax.set_ylabel(lab); ax.grid(alpha=.3); ax.legend()
     fig.tight_layout(); fig.savefig(f"{fn}{SUF}.png", dpi=140)
