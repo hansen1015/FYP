@@ -5,7 +5,8 @@ gui.py plus a "Start prediction test" button that tests the R(60 C) prediction:
   0-3 s    heater 5 % PWM: start resistance R0 = mean R of the last second
   3-5 s    heater 100 % PWM: measure dR/dt and the mean power P (mW)
   5-25 s   resistance PID holds the predicted R(60 C); TC and IR are recorded at the end
-  25-75 s  IR PID holds 60 C (20 s to settle + 30 s hold); actual R(60 C) = mean R of the last 10 s
+  25-45 s  IR PID holds 60 C; actual R(60 C) = mean R of the last 5 s
+  45-65 s  IR PID holds 70 C; actual R(70 C) = mean R of the last 5 s
 
 then one row is appended to output/prediction.csv. The usual time-series CSV + png are saved too.
 Prediction (fit of output (26-10-23)/dr_scatter_R60_RdRdtP.png, pulses that start at 30-40 C):
@@ -27,11 +28,10 @@ from gui import App
 gui.SETTINGS = os.path.join(gui.HERE, "gui_test_settings.json")  # keep gui.py's own settings untouched
 PRED_CSV = os.path.join(gui.OUT_DIR, "prediction.csv")
 PRED_HEADER = ["sample", "dR_dt_ohm_s", "power_at_100pct_pwm_mW", "initial_resistance_ohm",
-               "predicted_R60_ohm", "actual_R60_ohm", "ir_at_predicted_R_C", "tc_at_predicted_R_C"]
-T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 50.0  # phase lengths (s); R0 is read at R0_PWM
+               "predicted_R60_ohm", "actual_R60_ohm", "actual_R70_ohm", "ir_at_predicted_R_C", "tc_at_predicted_R_C"]
+T_R0, T_PULSE, T_RHOLD, T_IR60, T_IR70 = 3.0, 2.0, 20.0, 20.0, 20.0  # phase lengths (s); R0 is read at R0_PWM
 R0_PWM = 5
-T_AVG = 10.0  # actual R60 = mean over the last T_AVG s of the IR hold
-IR_TARGET = 60.0
+T_AVG = 5.0  # actual R60 / R70 = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 # log rows from gui.py: [time_s, timestamp, ir, tc, ohm, volt, mA, pwm, auto, src]
 
@@ -161,20 +161,28 @@ class TestApp(App):
             self.auto_var.set(True)
         elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:
             last = self.rows(now - 2, now)  # last 2 s of the resistance hold
-            t.update(phase="ir", ir_pred=mean([r[2] for r in last]), tc_pred=mean([r[3] for r in last]))
-            self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C, TC {t['tc_pred']:.1f} C\n"
-                      f"holding IR {IR_TARGET:g} C for {T_IR:.0f} s ...")
-            self.sp_vars[0].set(f"{IR_TARGET:g}")
-            self.src_var.set(0)
-            self.send(f"sp 0 {IR_TARGET:g}")
-            self.send("src 0")
-            self.send("auto 1")
-        elif t["phase"] == "ir" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR:
+            t.update(phase="ir60", ir_pred=mean([r[2] for r in last]), tc_pred=mean([r[3] for r in last]))
+            self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C, TC {t['tc_pred']:.1f} C")
+            self.set_ir(60.0, T_IR60)
+        elif t["phase"] == "ir60" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60:
+            t.update(phase="ir70", actual60=mean([r[4] for r in self.rows(now - T_AVG, now)]))
+            self.note(f"Actual R60      {t['actual60']:7.1f} ohm\nPred - actual  {t['pred'] - t['actual60']:+7.1f} ohm "
+                      f"({(t['pred'] / t['actual60'] - 1) * 100:+.1f} %)")
+            self.set_ir(70.0, T_IR70)
+        elif t["phase"] == "ir70" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60 + T_IR70:
             self.finish_test(now)
+
+    def set_ir(self, target, secs):
+        self.note(f"holding IR {target:g} C for {secs:.0f} s ...")
+        self.sp_vars[0].set(f"{target:g}")
+        self.src_var.set(0)
+        self.send(f"sp 0 {target:g}")
+        self.send("src 0")
+        self.send("auto 1")
 
     def finish_test(self, now):
         t, self.test = self.test, None
-        actual = mean([r[4] for r in self.rows(now - T_AVG, now)])
+        actual70 = mean([r[4] for r in self.rows(now - T_AVG, now)])
         self.auto_var.set(False)
         self.send("auto 0")
         self.send("pwm 0")
@@ -185,12 +193,11 @@ class TestApp(App):
             if new:
                 w.writerow(PRED_HEADER)
             w.writerow([self.serial_var.get().strip(), f"{t['drdt']:.4f}", f"{t['p']:.3f}", f"{t['r0']:.3f}",
-                        f"{t['pred']:.3f}", f"{actual:.3f}", f"{t['ir_pred']:.2f}", f"{t['tc_pred']:.2f}"])
+                        f"{t['pred']:.3f}", f"{t['actual60']:.3f}", f"{actual70:.3f}", f"{t['ir_pred']:.2f}", f"{t['tc_pred']:.2f}"])
         self.save_outputs()
-        self.note(f"Actual R60    {actual:7.1f} ohm\nPred - actual {t['pred'] - actual:+7.1f} ohm "
-                  f"({(t['pred'] / actual - 1) * 100:+.1f} %)\n")
-        self.test_var.set(f"Prediction test done: predicted {t['pred']:.1f} ohm, actual {actual:.1f} ohm "
-                          f"(IR {t['ir_pred']:.1f} C, TC {t['tc_pred']:.1f} C at the predicted R)")
+        self.note(f"Actual R70      {actual70:7.1f} ohm\n")
+        self.test_var.set(f"Prediction test done: predicted R60 {t['pred']:.1f}, actual R60 {t['actual60']:.1f}, "
+                          f"actual R70 {actual70:.1f} ohm")
 
 
 if __name__ == "__main__":
