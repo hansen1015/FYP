@@ -108,6 +108,8 @@ def segment_at(segs, t):
 
 
 class App:
+    MANUAL_PWM = True  # subclasses can hide the manual PWM row
+
     def __init__(self, root):
         self.root = root
         root.title("IR + Thermocouple + Resistance")
@@ -226,11 +228,12 @@ class App:
         ttk.Checkbutton(side, text="Enable PID", variable=self.auto_var,
                         command=self.toggle_auto).pack()
         ttk.Button(side, text="Apply PID (all inputs)", command=self.push_config).pack(pady=2)
-        row = ttk.Frame(side)
-        row.pack(pady=2)
-        ttk.Label(row, text="Manual PWM %").pack(side="left")
-        ttk.Spinbox(row, from_=0, to=100, increment=1, width=5, textvariable=self.pwm_var).pack(side="left")
-        ttk.Button(row, text="Set", command=self.send_pwm).pack(side="left")
+        if self.MANUAL_PWM:
+            row = ttk.Frame(side)
+            row.pack(pady=2)
+            ttk.Label(row, text="Manual PWM %").pack(side="left")
+            ttk.Spinbox(row, from_=0, to=100, increment=1, width=5, textvariable=self.pwm_var).pack(side="left")
+            ttk.Button(row, text="Set", command=self.send_pwm).pack(side="left")
         ttk.Button(side, text="ALL OFF", command=self.all_off).pack(pady=2)
 
     def _build_script_editor(self):
