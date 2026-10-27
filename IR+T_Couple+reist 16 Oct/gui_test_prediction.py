@@ -9,9 +9,10 @@ gui.py plus a "Start prediction test" button that tests the R(60 C) prediction:
   45-65 s  IR PID holds 70 C; actual R(70 C) = mean R of the last 5 s
 
 then one row is appended to output/prediction.csv. The usual time-series CSV + png are saved too.
-Prediction (fit of output (26-10-23)/dr_scatter_R60_RdRdtP.png, pulses that start at 30-40 C):
-  R60 = 72.505 * ln(dR/dt * R0 / P) + 201.591
-so the sample should start at roughly 30-40 C. The thermocouple board is not used (no port, readout or plot line).
+Prediction (ln fits of output/prediction.csv, actual R at 60 / 70 C against dR/dt * R0 / P):
+  R60 = 80.780 * ln(x) + 135.588,  R70 = 88.143 * ln(x) + 177.684,  x = dR/dt * R0 / P
+The "Set to 60 C" / "Set to 70 C" buttons run R0 + pulse + prediction, then hold the predicted
+resistance for 20 s with the resistance PID: no IR, nothing recorded, heater off at the end. The thermocouple board is not used (no port, readout or plot line).
 """
 
 import csv
@@ -36,8 +37,12 @@ R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 # log rows from gui.py: [time_s, timestamp, ir, tc, ohm, volt, mA, pwm, auto, src]
 
 
-def predict_r60(drdt, r0, p_mw):
-    return 72.505 * math.log(drdt * r0 / p_mw) + 201.591
+FIT = {60: (80.780, 135.588), 70: (88.143, 177.684)}  # temp -> (slope, intercept) of R against ln(x)
+
+
+def predict_r(temp, drdt, r0, p_mw):
+    a, b = FIT[temp]
+    return a * math.log(drdt * r0 / p_mw) + b
 
 
 def pulse_features(rows):
@@ -81,14 +86,16 @@ class TestApp(App):
         f = ttk.Frame(root)
         f.pack(fill="x", padx=8, pady=(0, 6))
         ttk.Button(f, text="Start prediction test", command=self.start_test).pack(side="left")
+        for temp in FIT:
+            ttk.Button(f, text=f"Set to {temp} °C", command=lambda T=temp: self.start_test(T)).pack(side="left", padx=(6, 0))
         self.test_var = tk.StringVar(value="Prediction test: idle (ALL OFF aborts it)")
         ttk.Label(f, textvariable=self.test_var).pack(side="left", padx=10)
 
-    def start_test(self):
+    def start_test(self, set_temp=None):  # set_temp: just hold that temperature, no IR, no recording
         if not self.ser["esp"]:
             messagebox.showerror("Test", "Connect the ESP board first")
             return
-        if not self.serial_var.get().strip():
+        if set_temp is None and not self.serial_var.get().strip():
             messagebox.showerror("Test", "Enter the serial no. (sample name)")
             return
         if self.script is not None or self.test is not None:
@@ -101,8 +108,9 @@ class TestApp(App):
         self.send("auto 0")
         self.pwm_var.set(R0_PWM)
         self.send(f"pwm {R0_PWM}")
-        self.note(f"--- {self.serial_var.get().strip()}  {datetime.now():%H:%M:%S} ---")
-        self.test = {"phase": "r0"}
+        name = f"set {set_temp} C" if set_temp else self.serial_var.get().strip()
+        self.note(f"--- {name}  {datetime.now():%H:%M:%S} ---")
+        self.test = {"phase": "r0", "set": set_temp}
 
     def rows(self, lo, hi):
         return [r for r in self.log if lo <= float(r[0]) < hi]
@@ -146,14 +154,14 @@ class TestApp(App):
                 return
             drdt, _, p = feat
             r0 = t["r0"]  # read at 5 % PWM, not the first pulse sample
-            pred = predict_r60(drdt, r0, p)
+            pred = predict_r(t["set"] or 60, drdt, r0, p)
             if not R_OK[0] < pred < R_OK[1]:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
             t.update(phase="rhold", drdt=drdt, p=p, pred=pred)
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
                       f"Power @100%  {p:8.1f} mW\ndR/dt*R0/P   {drdt * r0 / p:8.2f}\n"
-                      f"Predicted R60 {pred:7.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
+                      f"Predicted R{t['set'] or 60} {pred:7.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
             self.sp_vars[2].set(f"{pred:g}")
             self.src_var.set(2)
             self.send(f"sp 2 {pred:g}")
@@ -161,6 +169,14 @@ class TestApp(App):
             self.send("auto 1")
             self.auto_var.set(True)
         elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:
+            if t["set"]:
+                self.test = None
+                self.auto_var.set(False)
+                self.send("auto 0")
+                self.send("pwm 0")
+                self.note("done, heater off\n")
+                self.test_var.set(f"Set to {t['set']} C: done, heater off")
+                return
             last = self.rows(now - 2, now)  # last 2 s of the resistance hold
             t.update(phase="ir60", ir_pred=mean([r[2] for r in last]))
             self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C")
@@ -206,7 +222,8 @@ if __name__ == "__main__":
     rows = [[f"{i * 0.2:.1f}", "", 30, 30, 300 + 100 * i * 0.2, 10.0, 30.0, 100, 0, 0] for i in range(10)]
     s, r0, p = pulse_features(rows)
     assert abs(s - 100) < 1e-6 and r0 == 300 and abs(p - 300) < 1e-9
-    assert abs(predict_r60(100 * 300 / 300, 300, 300) - (72.505 * math.log(100) + 201.591)) < 1e-9
+    assert abs(predict_r(60, 100, 300, 300) - (80.780 * math.log(100) + 135.588)) < 1e-9
+    assert abs(predict_r(70, 100, 300, 300) - (88.143 * math.log(100) + 177.684)) < 1e-9
     assert pulse_features(rows[:3]) is None and math.isnan(mean([float("nan")]))
     root = tk.Tk()
     TestApp(root)
