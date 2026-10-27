@@ -9,8 +9,11 @@ gui.py plus a "Start prediction test" button that tests the R(60 C) prediction:
   45-65 s  IR PID holds 70 C; actual R(70 C) = mean R of the last 5 s
 
 then one row is appended to output/prediction.csv. The usual time-series CSV + png are saved too.
-Prediction (ln fits of output/prediction.csv, actual R at 60 / 70 C against dR/dt * R0 / P):
-  R60 = 80.780 * ln(x) + 135.588,  R70 = 88.143 * ln(x) + 177.684,  x = dR/dt * R0 / P
+Prediction (ln fits of before + after recovery data, actual R at 60 / 70 C against x = dR/dt * R0 / P):
+  R60 = 102.7 * ln(x) + 78.1,  R70 = 103.0 * ln(x) + 151.9; in between they are interpolated linearly:
+  R(T) = (100.9 + 0.03 T) * ln(x) + (-364.7 + 7.38 T), so the temperature of any resistance is
+  T = (R - 100.9 ln(x) + 364.7) / (0.03 ln(x) + 7.38). The plot's temperature panel shows this predicted T
+  (dashed) from the live resistance once the pulse has set x; it uses no IR.
 The "Set to 60 C" / "Set to 70 C" buttons run R0 + pulse + prediction, then hold the predicted
 resistance for 20 s with the resistance PID: no IR, nothing recorded, heater off at the end. The thermocouple board is not used (no port, readout or plot line).
 """
@@ -37,12 +40,18 @@ R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 # log rows from gui.py: [time_s, timestamp, ir, tc, ohm, volt, mA, pwm, auto, src]
 
 
-FIT = {60: (80.780, 135.588), 70: (88.143, 177.684)}  # temp -> (slope, intercept) of R against ln(x)
+# R = a(T) ln(x) + b(T): the 60 C and 70 C fits joined linearly in T (valid about 40-90 C, outside that is extrapolation)
+A0, A1, B0, B1 = 100.9, 0.03, -364.7, 7.38
+TEMPS = (60, 70)  # the Set to buttons
 
 
 def predict_r(temp, drdt, r0, p_mw):
-    a, b = FIT[temp]
-    return a * math.log(drdt * r0 / p_mw) + b
+    return (A0 + A1 * temp) * math.log(drdt * r0 / p_mw) + B0 + B1 * temp
+
+
+def predict_temp(r, x):  # x = dR/dt * R0 / P of the pulse
+    lx = math.log(x)
+    return (r - A0 * lx - B0) / (A1 * lx + B1)
 
 
 def pulse_features(rows):
@@ -66,6 +75,26 @@ class TestApp(App):
     MANUAL_PWM = False
     USE_TC = False
 
+    def _build_plot(self):
+        super()._build_plot()
+        self.x_pulse = None  # dR/dt * R0 / P of the running test, set when the pulse ends
+        self.ln_pt, = self.ax_t.plot([], [], color="#911eb4", ls="--", label="Predicted T (from R)")
+        self.ax_t.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0, fontsize=8)
+
+    def redraw(self):
+        if self.x_pulse and self.times:
+            pts = [(t, predict_temp(r, self.x_pulse)) for t, r in zip(self.times, self.res)
+                   if t >= T_R0 + T_PULSE and math.isfinite(r) and r > 0]
+            self.ln_pt.set_data([p[0] for p in pts], [p[1] for p in pts])
+        else:
+            self.ln_pt.set_data([], [])
+        super().redraw()
+        lo, hi = self.ax_t.get_ylim()
+        xmin = self.ax_p.get_xlim()[0]
+        vis = [v for t, v in zip(*self.ln_pt.get_data()) if t >= xmin and math.isfinite(v)] if self.x_pulse else []
+        if vis:
+            self.ax_t.set_ylim(min(lo, min(vis) - 1), max(hi, max(vis) + 1))
+
     def _build_script_editor(self):  # replaces gui.py's script editor with a results box
         w = ttk.LabelFrame(self.mid, text="Prediction results")
         w.pack(side="right", fill="y", padx=(4, 8), pady=4)
@@ -86,7 +115,7 @@ class TestApp(App):
         f = ttk.Frame(root)
         f.pack(fill="x", padx=8, pady=(0, 6))
         ttk.Button(f, text="Start prediction test", command=self.start_test).pack(side="left")
-        for temp in FIT:
+        for temp in TEMPS:
             ttk.Button(f, text=f"Set to {temp} °C", command=lambda T=temp: self.start_test(T)).pack(side="left", padx=(6, 0))
         self.test_var = tk.StringVar(value="Prediction test: idle (ALL OFF aborts it)")
         ttk.Label(f, textvariable=self.test_var).pack(side="left", padx=10)
@@ -103,6 +132,7 @@ class TestApp(App):
             return
         if not self.push_config():  # gains / setpoints for all inputs
             return
+        self.x_pulse = None
         self.clear_data()  # time 0 = start of the 5 % PWM R0 read
         self.auto_var.set(False)
         self.send("auto 0")
@@ -159,6 +189,7 @@ class TestApp(App):
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
             t.update(phase="rhold", drdt=drdt, p=p, pred=pred)
+            self.x_pulse = drdt * r0 / p
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
                       f"Power @100%  {p:8.1f} mW\ndR/dt*R0/P   {drdt * r0 / p:8.2f}\n"
                       f"Predicted R{t['set'] or 60} {pred:7.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
@@ -222,8 +253,9 @@ if __name__ == "__main__":
     rows = [[f"{i * 0.2:.1f}", "", 30, 30, 300 + 100 * i * 0.2, 10.0, 30.0, 100, 0, 0] for i in range(10)]
     s, r0, p = pulse_features(rows)
     assert abs(s - 100) < 1e-6 and r0 == 300 and abs(p - 300) < 1e-9
-    assert abs(predict_r(60, 100, 300, 300) - (80.780 * math.log(100) + 135.588)) < 1e-9
-    assert abs(predict_r(70, 100, 300, 300) - (88.143 * math.log(100) + 177.684)) < 1e-9
+    assert abs(predict_r(60, 100, 300, 300) - (102.7 * math.log(100) + 78.1)) < 1e-9
+    assert abs(predict_r(70, 100, 300, 300) - (103.0 * math.log(100) + 151.9)) < 1e-9
+    assert abs(predict_temp(predict_r(65, 100, 300, 300), 100) - 65) < 1e-9  # inverse
     assert pulse_features(rows[:3]) is None and math.isnan(mean([float("nan")]))
     root = tk.Tk()
     TestApp(root)
