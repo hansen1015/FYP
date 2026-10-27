@@ -1,15 +1,14 @@
 {
  "ports": {
-  "esp": "/dev/ttyACM1",
-  "tc": "/dev/ttyACM0"
+  "esp": "/dev/ttyACM0"
  },
  "src": 0,
- "serial": "",
+ "serial": "G5-5",
  "window": 120,
  "script_text": "",
  "inputs": [
   [
-   "55",
+   "70",
    "10",
    "5",
    "1"
@@ -21,9 +20,9 @@
    "0.1"
   ],
   [
-   "460",
+   "496.555",
+   "2",
    "1",
-   "0.5",
    "0"
   ]
  ]
