@@ -174,8 +174,9 @@ def main():
     with open(summary, "a", newline="") as f:
         wr = csv.writer(f)
         if new_file:
-            wr.writerow(["file", "start_angle_deg", "end_angle_deg"])
-        wr.writerow([Path(path).name, f"{rows[0][2]:.2f}", f"{rows[-1][2]:.2f}"])
+            wr.writerow(["file", "start_angle_deg", "end_angle_deg", "abs_change_deg"])
+        wr.writerow([Path(path).name, f"{rows[0][2]:.2f}", f"{rows[-1][2]:.2f}",
+                     f"{abs(rows[-1][2] - rows[0][2]):.2f}"])
 
     print(f"start angle: {rows[0][2]:.2f} deg\nend angle:   {rows[-1][2]:.2f} deg\n"
           f"change:      {rows[-1][2] - rows[0][2]:.2f} deg\noutput in {OUT_DIR}")
