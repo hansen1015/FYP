@@ -91,11 +91,12 @@ def track(prev, cur, pts, lk):
 
 
 def hinge_angle(pts):
-    """Signed angle (deg) from fixed-part line to moving-arm line, in cm-plane."""
+    """Acute angle (0-90 deg) between the moving-arm and fixed-part lines, in the cm-plane."""
     H = cv2.getPerspectiveTransform(pts[:4], SQUARE)
     a, b, c, d = cv2.perspectiveTransform(pts[4:].reshape(-1, 1, 2), H).reshape(-1, 2)
     arm, fixed = b - a, d - c
-    return np.degrees(np.arctan2(fixed[0] * arm[1] - fixed[1] * arm[0], fixed @ arm))
+    ang = abs(np.degrees(np.arctan2(fixed[0] * arm[1] - fixed[1] * arm[0], fixed @ arm)))
+    return min(ang, 180 - ang)
 
 
 def main():
@@ -167,6 +168,14 @@ def main():
         wr = csv.writer(f)
         wr.writerow(["frame", "time_s", "angle_deg"])
         wr.writerows(rows)
+
+    summary = OUT_DIR / "summary.csv"
+    new_file = not summary.exists()
+    with open(summary, "a", newline="") as f:
+        wr = csv.writer(f)
+        if new_file:
+            wr.writerow(["file", "start_angle_deg", "end_angle_deg"])
+        wr.writerow([Path(path).name, f"{rows[0][2]:.2f}", f"{rows[-1][2]:.2f}"])
 
     print(f"start angle: {rows[0][2]:.2f} deg\nend angle:   {rows[-1][2]:.2f} deg\n"
           f"change:      {rows[-1][2] - rows[0][2]:.2f} deg\noutput in {OUT_DIR}")
