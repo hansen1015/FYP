@@ -14,7 +14,7 @@ Prediction (ln fits of before + after recovery data, actual R at 60 / 70 C again
   R(T) = (100.9 + 0.03 T) * ln(x) + (-364.7 + 7.38 T), so the temperature of any resistance is
   T = (R - 100.9 ln(x) + 364.7) / (0.03 ln(x) + 7.38). The plot's temperature panel shows this predicted T
   (dashed) from the live resistance once the pulse has set x; it uses no IR.
-The "Set to 60 C" / "Set to 70 C" buttons run R0 + pulse + prediction, then hold the predicted
+The "Set to [temp] C" box (30-80 C) + Go runs R0 + pulse + prediction, then hold the predicted
 resistance for 20 s with the resistance PID: no IR, nothing recorded, heater off at the end. The thermocouple board is not used (no port, readout or plot line).
 """
 
@@ -42,7 +42,7 @@ R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 
 # R = a(T) ln(x) + b(T): the 60 C and 70 C fits joined linearly in T (valid about 40-90 C, outside that is extrapolation)
 A0, A1, B0, B1 = 100.9, 0.03, -364.7, 7.38
-TEMPS = (60, 70)  # the Set to buttons
+SET_RANGE = (30.0, 80.0)  # allowed temperatures for "Set to" (C)
 
 
 def predict_r(temp, drdt, r0, p_mw):
@@ -115,10 +115,22 @@ class TestApp(App):
         f = ttk.Frame(root)
         f.pack(fill="x", padx=8, pady=(0, 6))
         ttk.Button(f, text="Start prediction test", command=self.start_test).pack(side="left")
-        for temp in TEMPS:
-            ttk.Button(f, text=f"Set to {temp} °C", command=lambda T=temp: self.start_test(T)).pack(side="left", padx=(6, 0))
+        self.set_var = tk.StringVar(value="60")
+        ttk.Label(f, text="Set to").pack(side="left", padx=(10, 2))
+        ttk.Entry(f, textvariable=self.set_var, width=5).pack(side="left")
+        ttk.Button(f, text="°C  Go", command=self.start_set).pack(side="left", padx=(2, 0))
         self.test_var = tk.StringVar(value="Prediction test: idle (ALL OFF aborts it)")
         ttk.Label(f, textvariable=self.test_var).pack(side="left", padx=10)
+
+    def start_set(self):
+        try:
+            temp = float(self.set_var.get())
+        except ValueError:
+            temp = float("nan")
+        if not SET_RANGE[0] <= temp <= SET_RANGE[1]:
+            messagebox.showerror("Set to", f"Enter a temperature from {SET_RANGE[0]:g} to {SET_RANGE[1]:g} C")
+            return
+        self.start_test(temp)
 
     def start_test(self, set_temp=None):  # set_temp: just hold that temperature, no IR, no recording
         if not self.ser["esp"]:
@@ -138,7 +150,7 @@ class TestApp(App):
         self.send("auto 0")
         self.pwm_var.set(R0_PWM)
         self.send(f"pwm {R0_PWM}")
-        name = f"set {set_temp} C" if set_temp else self.serial_var.get().strip()
+        name = f"set {set_temp:g} C" if set_temp else self.serial_var.get().strip()
         self.note(f"--- {name}  {datetime.now():%H:%M:%S} ---")
         self.test = {"phase": "r0", "set": set_temp}
 
@@ -184,7 +196,7 @@ class TestApp(App):
                 return
             drdt, _, p = feat
             r0 = t["r0"]  # read at 5 % PWM, not the first pulse sample
-            pred = predict_r(t["set"] or 60, drdt, r0, p)
+            pred = predict_r(t["set"] if t["set"] is not None else 60, drdt, r0, p)
             if not R_OK[0] < pred < R_OK[1]:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
@@ -192,7 +204,7 @@ class TestApp(App):
             self.x_pulse = drdt * r0 / p
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
                       f"Power @100%  {p:8.1f} mW\ndR/dt*R0/P   {drdt * r0 / p:8.2f}\n"
-                      f"Predicted R{t['set'] or 60} {pred:7.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
+                      f"Predicted R{t['set'] if t['set'] is not None else 60:g} {pred:7.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
             self.sp_vars[2].set(f"{pred:g}")
             self.src_var.set(2)
             self.send(f"sp 2 {pred:g}")
@@ -200,13 +212,13 @@ class TestApp(App):
             self.send("auto 1")
             self.auto_var.set(True)
         elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:
-            if t["set"]:
+            if t["set"] is not None:
                 self.test = None
                 self.auto_var.set(False)
                 self.send("auto 0")
                 self.send("pwm 0")
                 self.note("done, heater off\n")
-                self.test_var.set(f"Set to {t['set']} C: done, heater off")
+                self.test_var.set(f"Set to {t['set']:g} C: done, heater off")
                 return
             last = self.rows(now - 2, now)  # last 2 s of the resistance hold
             t.update(phase="ir60", ir_pred=mean([r[2] for r in last]))
