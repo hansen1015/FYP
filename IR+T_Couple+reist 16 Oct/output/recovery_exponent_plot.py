@@ -30,7 +30,7 @@ for r, deg in enumerate((60, 70)):
 fig.tight_layout(); fig.savefig("recovery_fitted_exponents.png", dpi=130)
 
 # ANN: inputs ln dRdt, ln R0, ln P (no group label) -> R60. Average of 5 seeds.
-def ann(seed): return make_pipeline(StandardScaler(), MLPRegressor(hidden_layer_sizes=(8,), alpha=1e-2, max_iter=5000, random_state=seed))
+def ann(seed): return make_pipeline(StandardScaler(), MLPRegressor(hidden_layer_sizes=(8, 8, 8), alpha=1e-2, max_iter=5000, random_state=seed))
 def fitpred(tr, te, y):
     m, sd = y[tr].mean(), y[tr].std()  # scale the target: MLP outputs start near 0
     return m + sd * np.mean([ann(s).fit(L[tr], (y[tr] - m) / sd).predict(L[te]) for s in range(5)], axis=0)
