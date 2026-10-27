@@ -52,6 +52,38 @@ def pick_points(frame, max_w=1280):
     return np.float32(pts)
 
 
+def template_track(prev, cur, p, r=15, search=45):
+    """Fallback for points LK loses: match the previous-frame patch near the old position."""
+    x, y = int(round(p[0])), int(round(p[1]))
+    h, w = prev.shape
+    if min(x - r, y - r) < 0 or x + r >= w or y + r >= h:
+        return None
+    tpl = prev[y - r:y + r + 1, x - r:x + r + 1]
+    x0, y0 = max(x - search, 0), max(y - search, 0)
+    win = cur[y0:min(y + search, h), x0:min(x + search, w)]
+    if win.shape[0] <= tpl.shape[0] or win.shape[1] <= tpl.shape[1]:
+        return None
+    res = cv2.matchTemplate(win, tpl, cv2.TM_CCOEFF_NORMED)
+    _, score, _, loc = cv2.minMaxLoc(res)
+    return (np.float32([x0 + loc[0] + r, y0 + loc[1] + r]) if score > 0.5 else None)
+
+
+def track(prev, cur, pts, lk):
+    """LK with a forward-backward check; bad points fall back to template matching."""
+    p0 = pts.reshape(-1, 1, 2)
+    p1, st, _ = cv2.calcOpticalFlowPyrLK(prev, cur, p0, None, **lk)
+    back, st2, _ = cv2.calcOpticalFlowPyrLK(cur, prev, p1, None, **lk)
+    good = (st.ravel() == 1) & (st2.ravel() == 1) & (np.linalg.norm(back - p0, axis=2).ravel() < 1.5)
+    new, lost = p1.reshape(-1, 2).copy(), 0
+    for k in np.flatnonzero(~good):
+        t = template_track(prev, cur, pts[k])
+        if t is None:
+            new[k], lost = pts[k], lost + 1
+        else:
+            new[k] = t
+    return new.astype(np.float32), lost
+
+
 def hinge_angle(pts):
     """Signed angle (deg) from fixed-part line to moving-arm line, in cm-plane."""
     H = cv2.getPerspectiveTransform(pts[:4], SQUARE)
@@ -83,7 +115,7 @@ def main():
                           cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
     rows, lost = [], 0
     gray, i = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 0
-    lk = dict(winSize=(31, 31), maxLevel=4,
+    lk = dict(winSize=(41, 41), maxLevel=5,
               criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
 
     while True:
@@ -103,9 +135,8 @@ def main():
         if not ok:
             break
         ng = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        new, st, _ = cv2.calcOpticalFlowPyrLK(gray, ng, pts.reshape(-1, 1, 2), None, **lk)
-        lost += int(not st.all())  # shortcut: lost points keep their last position, check the video
-        pts = np.where(st.reshape(-1, 1) == 1, new.reshape(-1, 2), pts).astype(np.float32)
+        pts, n = track(gray, ng, pts, lk)
+        lost += int(n > 0)  # shortcut: unrecoverable points keep their last position, check the video
         gray, i = ng, i + 1
 
     out.release()
