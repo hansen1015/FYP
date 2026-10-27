@@ -4,14 +4,14 @@ gui.py plus a "Start prediction test" button that tests the R(60 C) prediction:
 
   0-3 s    heater 5 % PWM: start resistance R0 = mean R of the last second
   3-5 s    heater 100 % PWM: measure dR/dt and the mean power P (mW)
-  5-25 s   resistance PID holds the predicted R(60 C); TC and IR are recorded at the end
+  5-25 s   resistance PID holds the predicted R(60 C); the IR is recorded at the end
   25-45 s  IR PID holds 60 C; actual R(60 C) = mean R of the last 5 s
   45-65 s  IR PID holds 70 C; actual R(70 C) = mean R of the last 5 s
 
 then one row is appended to output/prediction.csv. The usual time-series CSV + png are saved too.
 Prediction (fit of output (26-10-23)/dr_scatter_R60_RdRdtP.png, pulses that start at 30-40 C):
   R60 = 72.505 * ln(dR/dt * R0 / P) + 201.591
-so the sample should start at roughly 30-40 C. Needs the same parts as gui.py.
+so the sample should start at roughly 30-40 C. The thermocouple board is not used (no port, readout or plot line).
 """
 
 import csv
@@ -28,7 +28,7 @@ from gui import App
 gui.SETTINGS = os.path.join(gui.HERE, "gui_test_settings.json")  # keep gui.py's own settings untouched
 PRED_CSV = os.path.join(gui.OUT_DIR, "prediction.csv")
 PRED_HEADER = ["sample", "dR_dt_ohm_s", "power_at_100pct_pwm_mW", "initial_resistance_ohm",
-               "predicted_R60_ohm", "actual_R60_ohm", "actual_R70_ohm", "ir_at_predicted_R_C", "tc_at_predicted_R_C"]
+               "predicted_R60_ohm", "actual_R60_ohm", "actual_R70_ohm", "ir_at_predicted_R_C"]
 T_R0, T_PULSE, T_RHOLD, T_IR60, T_IR70 = 3.0, 2.0, 20.0, 20.0, 20.0  # phase lengths (s); R0 is read at R0_PWM
 R0_PWM = 5
 T_AVG = 5.0  # actual R60 / R70 = mean over the last T_AVG s of each IR hold
@@ -59,6 +59,7 @@ def mean(vals):
 
 class TestApp(App):
     MANUAL_PWM = False
+    USE_TC = False
 
     def _build_script_editor(self):  # replaces gui.py's script editor with a results box
         w = ttk.LabelFrame(self.mid, text="Prediction results")
@@ -101,7 +102,7 @@ class TestApp(App):
         self.pwm_var.set(R0_PWM)
         self.send(f"pwm {R0_PWM}")
         self.note(f"--- {self.serial_var.get().strip()}  {datetime.now():%H:%M:%S} ---")
-        self.test = {"phase": "r0", "ir_pred": float("nan"), "tc_pred": float("nan")}
+        self.test = {"phase": "r0"}
 
     def rows(self, lo, hi):
         return [r for r in self.log if lo <= float(r[0]) < hi]
@@ -161,8 +162,8 @@ class TestApp(App):
             self.auto_var.set(True)
         elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:
             last = self.rows(now - 2, now)  # last 2 s of the resistance hold
-            t.update(phase="ir60", ir_pred=mean([r[2] for r in last]), tc_pred=mean([r[3] for r in last]))
-            self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C, TC {t['tc_pred']:.1f} C")
+            t.update(phase="ir60", ir_pred=mean([r[2] for r in last]))
+            self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C")
             self.set_ir(60.0, T_IR60)
         elif t["phase"] == "ir60" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60:
             t.update(phase="ir70", actual60=mean([r[4] for r in self.rows(now - T_AVG, now)]))
@@ -193,7 +194,7 @@ class TestApp(App):
             if new:
                 w.writerow(PRED_HEADER)
             w.writerow([self.serial_var.get().strip(), f"{t['drdt']:.4f}", f"{t['p']:.3f}", f"{t['r0']:.3f}",
-                        f"{t['pred']:.3f}", f"{t['actual60']:.3f}", f"{actual70:.3f}", f"{t['ir_pred']:.2f}", f"{t['tc_pred']:.2f}"])
+                        f"{t['pred']:.3f}", f"{t['actual60']:.3f}", f"{actual70:.3f}", f"{t['ir_pred']:.2f}"])
         self.save_outputs()
         self.note(f"Actual R70      {actual70:7.1f} ohm\n")
         self.test_var.set(f"Prediction test done: predicted R60 {t['pred']:.1f}, actual R60 {t['actual60']:.1f}, "

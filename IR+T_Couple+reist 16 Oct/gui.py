@@ -109,6 +109,7 @@ def segment_at(segs, t):
 
 class App:
     MANUAL_PWM = True  # subclasses can hide the manual PWM row
+    USE_TC = True  # subclasses can drop the thermocouple port, readout and plot line
 
     def __init__(self, root):
         self.root = root
@@ -145,6 +146,8 @@ class App:
         f.pack(fill="x", padx=8, pady=6)
         self.port_vars, self.port_boxes, self.conn_btns = {}, {}, {}
         for key, title in (("esp", "ESP board (IR/res/PWM):"), ("tc", "Thermocouple board:")):
+            if key == "tc" and not self.USE_TC:
+                continue
             ttk.Label(f, text=title).pack(side="left", padx=(0, 2))
             var = tk.StringVar()
             box = ttk.Combobox(f, textvariable=var, width=16)
@@ -169,6 +172,8 @@ class App:
         self.read_lbl = {}
         for key, title in (("ir", "IR temp"), ("tc", "Thermocouple"), ("res", "Resistance"),
                            ("volt", "Voltage"), ("cur", "Current"), ("pwm", "PWM")):
+            if key == "tc" and not self.USE_TC:
+                continue
             box = ttk.LabelFrame(f, text=title)
             box.pack(side="left", expand=True, fill="x", padx=4)
             lbl = ttk.Label(box, text="--", font=("TkDefaultFont", 20, "bold"), anchor="center")
@@ -186,7 +191,7 @@ class App:
         for ax in (self.ax_t, self.ax_r, self.ax_p):
             ax.grid(True, alpha=0.3)
         self.ln_ir, = self.ax_t.plot([], [], color="#e6194b", label="IR")
-        self.ln_tc, = self.ax_t.plot([], [], color="#4363d8", label="Thermocouple")
+        self.ln_tc, = self.ax_t.plot([], [], color="#4363d8", label="Thermocouple" if self.USE_TC else "_tc")  # "_" hides it from the legend
         self.ln_res, = self.ax_r.plot([], [], color="#3cb44b")
         self.ln_pwm, = self.ax_p.plot([], [], color="#f58231")
         self.ln_sp_t, = self.ax_t.plot([], [], "k--", alpha=0.6, label="Setpoint")
@@ -266,7 +271,7 @@ class App:
         ports = [p.device for p in serial.tools.list_ports.comports()]
         for k, box in self.port_boxes.items():
             box["values"] = ports
-        for k, port in zip(("esp", "tc"), ports):
+        for k, port in zip(self.port_vars, ports):
             if not self.port_vars[k].get():
                 self.port_vars[k].set(self.cfg.get("ports", {}).get(k) or port)
 
