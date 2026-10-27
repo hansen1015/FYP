@@ -24,11 +24,17 @@ PROMPTS = [
 ]
 
 
-def pick_points(frame, max_w=1280):
+END_PROMPTS = [
+    ("moving arm point", 2, "same 2 points as at the start (ESC = keep tracked)"),
+    ("fixed part point", 2, "same 2 points as at the start"),
+]
+
+
+def pick_points(frame, prompts=PROMPTS, max_w=1280):
     s = min(1.0, max_w / frame.shape[1])
     shown = cv2.resize(frame, None, fx=s, fy=s)
     pts = []
-    labels = [(n, hint) for n, c, hint in PROMPTS for _ in range(c)]
+    labels = [(n, hint) for n, c, hint in prompts for _ in range(c)]
 
     def on_click(event, x, y, *_):
         if event == cv2.EVENT_LBUTTONDOWN and len(pts) < len(labels):
@@ -109,19 +115,45 @@ def main():
     h, w = frame.shape[:2]
 
     pts = pick_points(frame)
+    lk = dict(winSize=(41, 41), maxLevel=5,
+              criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+
+    # pass 1: track every frame
+    track_pts, lost, gray = [pts], 0, cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    while True:
+        ok, nxt = cap.read()
+        if not ok:
+            break
+        frame = nxt
+        ng = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        pts, n = track(gray, ng, pts, lk)
+        lost += int(n > 0)  # shortcut: unrecoverable points keep their last position, check the video
+        track_pts.append(pts)
+        gray = ng
+    track_pts = np.array(track_pts)
+
+    # click the arm and fixed points on the last frame; spread the end error linearly over the video
+    try:
+        end = pick_points(frame, END_PROMPTS)
+        err = np.zeros((8, 2), np.float32)
+        err[4:8] = end - track_pts[-1, 4:8]
+        track_pts += err * np.linspace(0, 1, len(track_pts))[:, None, None]
+    except SystemExit:
+        pass
+
+    # pass 2: draw
     OUT_DIR.mkdir(exist_ok=True)
     stem = Path(path).stem
     out = cv2.VideoWriter(str(OUT_DIR / f"{stem}_angle.mp4"),
                           cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-    rows, lost = [], 0
-    gray, i = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 0
-    lk = dict(winSize=(41, 41), maxLevel=5,
-              criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
-
-    while True:
+    cap.release()
+    cap, rows = cv2.VideoCapture(path), []
+    for i, pts in enumerate(track_pts):
+        ok, img = cap.read()
+        if not ok:
+            break
         ang = hinge_angle(pts)
         rows.append((i, i / fps, ang))
-        img = frame.copy()
         for p in pts[:4]:
             cv2.circle(img, tuple(int(v) for v in p), 3, (255, 0, 0), -1)
         cv2.polylines(img, [pts[:4].astype(np.int32)], True, (255, 0, 0), 1)
@@ -130,15 +162,6 @@ def main():
         cv2.putText(img, f"{ang:.1f} deg  t={i / fps:.2f}s", (20, 40),
                     cv2.FONT_HERSHEY_SIMPLEX, 1.1, (0, 255, 255), 3)
         out.write(img)
-
-        ok, frame = cap.read()
-        if not ok:
-            break
-        ng = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        pts, n = track(gray, ng, pts, lk)
-        lost += int(n > 0)  # shortcut: unrecoverable points keep their last position, check the video
-        gray, i = ng, i + 1
-
     out.release()
     with open(OUT_DIR / f"{stem}_angle.csv", "w", newline="") as f:
         wr = csv.writer(f)
