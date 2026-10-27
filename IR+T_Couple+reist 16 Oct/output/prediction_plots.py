@@ -25,6 +25,21 @@ for col, deg in (("actual_R60_ohm", 60), ("actual_R70_ohm", 70)):
     scatter(ax, d.x, d[col], "dR/dt × R0 ÷ P", f"Actual R at {deg} °C (Ω)", fit="log")
     fig.tight_layout(); fig.savefig(f"prediction_R{deg}_vs_RdRdtP.png", dpi=140)
 
+fig, ax = plt.subplots(figsize=(8, 6.5))  # both temperatures: colour = temperature, marker = sample
+marks = dict(zip(samples, "osD^v"))
+for col, deg, color in (("actual_R60_ohm", 60, "C0"), ("actual_R70_ohm", 70, "C3")):
+    for n in samples:
+        g = d[d["sample"] == n]
+        ax.scatter(g.x, g[col], c=color, marker=marks[n], s=45, zorder=3)
+    if deg == 60:  # gray legend handles: the marker shape is the sample, the colour the temperature
+        for n in samples:
+            ax.scatter([], [], c="gray", marker=marks[n], s=45, label=n)
+    c = np.polyfit(np.log(d.x), d[col], 1); xs = np.linspace(d.x.min(), d.x.max(), 200)
+    r2 = np.corrcoef(np.log(d.x), d[col])[0, 1] ** 2
+    ax.plot(xs, np.polyval(c, np.log(xs)), c=color, label=f"{deg} °C: {c[0]:.1f}·ln(x) + {c[1]:.1f}  (R² = {r2:.2f})")
+ax.set_xlabel("dR/dt × R0 ÷ P"); ax.set_ylabel("Actual resistance (Ω)"); ax.grid(alpha=.3); ax.legend(fontsize=8)
+fig.tight_layout(); fig.savefig("prediction_R60_R70_vs_RdRdtP.png", dpi=140)
+
 fig, ax = plt.subplots(figsize=(7, 6))
 scatter(ax, d.actual_R60_ohm, d.predicted_R60_ohm, "Actual R at 60 °C (Ω)", "Predicted R at 60 °C (Ω)")
 lim = [d[["actual_R60_ohm", "predicted_R60_ohm"]].min().min() - 10, d[["actual_R60_ohm", "predicted_R60_ohm"]].max().max() + 10]
