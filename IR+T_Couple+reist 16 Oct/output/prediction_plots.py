@@ -50,3 +50,12 @@ e = (d.predicted_R60_ohm / d.actual_R60_ohm - 1) * 100
 print(e.groupby(d["sample"]).agg(["mean", "min", "max"]).round(1))
 for col in ("actual_R60_ohm", "actual_R70_ohm"):
     c = np.log(d.x); print(col, "log R²", round(np.corrcoef(c, d[col])[0, 1] ** 2, 2), "| mean/min/max", d[col].mean().round(0), d[col].min(), d[col].max())
+
+# distribution of the IR temp reached when the resistance PID held the predicted R60
+fig, ax = plt.subplots(figsize=(7.5, 5))
+bins = np.arange(np.floor(d.ir_at_predicted_R_C.min()), np.ceil(d.ir_at_predicted_R_C.max()) + 1, 1)
+ax.hist([d[d["sample"] == n].ir_at_predicted_R_C for n in samples], bins=bins, stacked=True, label=samples, color=[f"C{i}" for i in range(len(samples))])
+ax.axvline(60, c="k", ls="--", lw=1, label="60 °C target")
+ax.set_xlabel("IR temp at the predicted resistance (°C)"); ax.set_ylabel("Runs"); ax.legend(fontsize=8)
+fig.tight_layout(); fig.savefig("prediction_ir_at_predicted_R_distribution.png", dpi=140)
+print(d.ir_at_predicted_R_C.describe().round(1).to_dict(), d.groupby("sample").ir_at_predicted_R_C.mean().round(1).to_dict())
