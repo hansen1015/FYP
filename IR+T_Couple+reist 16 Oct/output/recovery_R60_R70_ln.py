@@ -11,8 +11,8 @@ for deg, ls, c in ((60, "-", "C0"), (70, "--", "C3")):
     for g, (_, mk) in G.items():
         s = d[d.group == g]
         ax.scatter(s.x, s[f"actual_R{deg}_ohm"], marker=mk, s=40, c=c, label=f"{g}, {deg} °C", zorder=3)
-    y = d[f"actual_R{deg}_ohm"]; k = np.polyfit(np.log(d.x), y, 1); r2 = np.corrcoef(np.log(d.x), y)[0, 1] ** 2
+    y = d[f"actual_R{deg}_ohm"]; k = np.polyfit(np.log(d.x), y, 1); r2 = np.corrcoef(np.log(d.x), y)[0, 1] ** 2; l1 = (np.polyval(k, np.log(d.x)) - y).abs().mean()
     xs = np.linspace(d.x.min(), d.x.max(), 200)
-    ax.plot(xs, np.polyval(k, np.log(xs)), c=c, ls=ls, label=f"{deg} °C, both groups: {k[0]:.1f}·ln(x) {k[1]:+.1f}  (R² = {r2:.2f})")
+    ax.plot(xs, np.polyval(k, np.log(xs)), c=c, ls=ls, label=f"{deg} °C, both groups: {k[0]:.1f}·ln(x) {k[1]:+.1f}  (R² = {r2:.2f}, L1 = {l1:.0f} Ω)")
 ax.set_xlabel("dR/dt × R0 ÷ P"); ax.set_ylabel("Actual resistance (Ω)"); ax.grid(alpha=.3); ax.legend(fontsize=8)
 fig.tight_layout(); fig.savefig("recovery_R60_R70_vs_RdRdtP.png", dpi=140)
