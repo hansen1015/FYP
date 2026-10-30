@@ -20,9 +20,9 @@ resistance for 20 s with the resistance PID: no IR, nothing recorded, heater off
 
 IR temperature: real = 1.288 * IR_sensor - 7.89 (R2 0.995) is applied to every IR reading (readout, plot, CSV) and the
 IR setpoint typed in the GUI is real C, converted back to the sensor scale before it goes to the board (the board's
-PID still runs on the raw sensor). The R fits were measured at sensor 60 / 70 and are written in real C (69.39 / 82.27), so
-"Set to" and the predicted-T line need no conversion. The test's two IR holds stay at sensor 60 / 70 (real 69.4 / 82.3 C)
-so prediction.csv keeps comparing like with like.
+PID still runs on the raw sensor). Everything you see or type is real C. The R fits come from old runs held at sensor 60 / 70 and are
+written in real C (69.39 / 82.27). The test's IR holds are real 60 / 70 C from now on, so actual_R60 / actual_R70 in
+prediction.csv rows recorded before this change were at real 69.4 / 82.3 C.
 """
 
 import csv
@@ -233,7 +233,7 @@ class TestApp(App):
                 return
             drdt, _, p = feat
             r0 = t["r0"]  # read at 5 % PWM, not the first pulse sample
-            pred = predict_r(t["set"] if t["set"] is not None else ir_real(60), drdt, r0, p)
+            pred = predict_r(t["set"] if t["set"] is not None else 60, drdt, r0, p)
             if not R_OK[0] < pred < R_OK[1]:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
@@ -241,7 +241,7 @@ class TestApp(App):
             self.x_pulse = drdt * r0 / p
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
                       f"Power @100%  {p:8.1f} mW\ndR/dt*R0/P   {drdt * r0 / p:8.2f}\n"
-                      f"Predicted R @{t['set'] if t['set'] is not None else ir_real(60):.1f}C {pred:5.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
+                      f"Predicted R @{t['set'] if t['set'] is not None else 60:g}C {pred:5.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
             self.sp_vars[2].set(f"{pred:g}")
             self.src_var.set(2)
             self.send(f"sp 2 {pred:g}")
@@ -269,12 +269,11 @@ class TestApp(App):
         elif t["phase"] == "ir70" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60 + T_IR70:
             self.finish_test(now)
 
-    def set_ir(self, target, secs):  # target on the sensor scale (as the fits were measured)
-        real = ir_real(target)
-        self.note(f"holding IR {real:.1f} C (sensor {target:g}) for {secs:.0f} s ...")
-        self.sp_vars[0].set(f"{real:.2f}")
+    def set_ir(self, target, secs):  # target in real C
+        self.note(f"holding IR {target:g} C for {secs:.0f} s ...")
+        self.sp_vars[0].set(f"{target:g}")
         self.src_var.set(0)
-        self.send(f"sp 0 {real:.2f}")
+        self.send(f"sp 0 {target:g}")
         self.send("src 0")
         self.send("auto 1")
 
