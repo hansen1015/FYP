@@ -9,19 +9,20 @@ gui.py plus a "Start prediction test" button that tests the R(60 C) prediction:
   45-65 s  IR PID holds 70 C; actual R(70 C) = mean R of the last 5 s
 
 then one row is appended to output/prediction.csv. The usual time-series CSV + png are saved too.
-Prediction (ln fits of before + after recovery data, actual R at 60 / 70 C against x = dR/dt * R0 / P):
-  R60 = 102.7 * ln(x) + 78.1,  R70 = 103.0 * ln(x) + 151.9; in between they are interpolated linearly:
-  R(T) = (100.9 + 0.03 T) * ln(x) + (-364.7 + 7.38 T), so the temperature of any resistance is
-  T = (R - 100.9 ln(x) + 364.7) / (0.03 ln(x) + 7.38). The plot's temperature panel shows this predicted T
+Prediction (ln fits of before + after recovery data, R against x = dR/dt * R0 / P, measured at sensor IR 60 / 70
+  = real 69.39 / 82.27 C):  R(69.39 C) = 102.68 * ln(x) + 78.13,  R(82.27 C) = 102.99 * ln(x) + 151.90; in between
+  (and outside, extrapolated) they are joined linearly in real T:
+  R(T) = (100.99 + 0.02436 T) * ln(x) + (-319.30 + 5.727 T), so the temperature of any resistance is
+  T = (R - 100.99 ln(x) + 319.30) / (0.02436 ln(x) + 5.727). The plot's temperature panel shows this predicted T
   (dashed) from the live resistance once the pulse has set x; it uses no IR.
 The "Set to [temp] C" box (30-80 C) + Go runs R0 + pulse + prediction, then hold the predicted
 resistance for 20 s with the resistance PID: no IR, nothing recorded, heater off at the end. The thermocouple board is not used (no port, readout or plot line).
 
 IR temperature: real = 1.288 * IR_sensor - 7.89 (R2 0.995) is applied to every IR reading (readout, plot, CSV) and the
 IR setpoint typed in the GUI is real C, converted back to the sensor scale before it goes to the board (the board's
-PID still runs on the raw sensor). The R(60/70 C) fits were measured at raw sensor 60 / 70 (= real 69.4 / 82.2 C), so
-the model's temperatures are on the sensor scale: "Set to" and the predicted-T line convert real <-> sensor, and the
-test's two IR holds stay at sensor 60 / 70 so prediction.csv keeps comparing like with like.
+PID still runs on the raw sensor). The R fits were measured at sensor 60 / 70 and are written in real C (69.39 / 82.27), so
+"Set to" and the predicted-T line need no conversion. The test's two IR holds stay at sensor 60 / 70 (real 69.4 / 82.3 C)
+so prediction.csv keeps comparing like with like.
 """
 
 import csv
@@ -46,8 +47,8 @@ R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 # log rows from gui.py: [time_s, timestamp, ir, tc, ohm, volt, mA, pwm, auto, src]
 
 
-# R = a(T) ln(x) + b(T): the 60 C and 70 C fits joined linearly in T (valid about 40-90 C, outside that is extrapolation)
-A0, A1, B0, B1 = 100.9, 0.03, -364.7, 7.38
+# R = a(T) ln(x) + b(T), T in real C: the fits at real 69.39 and 82.27 C joined linearly in T (data only between those)
+A0, A1, B0, B1 = 100.9887, 0.024363, -319.2978, 5.72745
 IR_GAIN, IR_OFFSET = 1.288, -7.89  # real C = IR_GAIN * sensor + IR_OFFSET
 
 
@@ -119,7 +120,7 @@ class TestApp(App):
 
     def redraw(self):
         if self.x_pulse and self.times:
-            pts = [(t, ir_real(predict_temp(r, self.x_pulse))) for t, r in zip(self.times, self.res)
+            pts = [(t, predict_temp(r, self.x_pulse)) for t, r in zip(self.times, self.res)
                    if t >= T_R0 + T_PULSE and math.isfinite(r) and r > 0]
             self.ln_pt.set_data([p[0] for p in pts], [p[1] for p in pts])
         else:
@@ -232,7 +233,7 @@ class TestApp(App):
                 return
             drdt, _, p = feat
             r0 = t["r0"]  # read at 5 % PWM, not the first pulse sample
-            pred = predict_r(ir_sensor(t["set"]) if t["set"] is not None else 60, drdt, r0, p)  # model is on the sensor scale
+            pred = predict_r(t["set"] if t["set"] is not None else ir_real(60), drdt, r0, p)
             if not R_OK[0] < pred < R_OK[1]:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
@@ -240,7 +241,7 @@ class TestApp(App):
             self.x_pulse = drdt * r0 / p
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
                       f"Power @100%  {p:8.1f} mW\ndR/dt*R0/P   {drdt * r0 / p:8.2f}\n"
-                      f"Predicted R{t['set'] if t['set'] is not None else 60:g} {pred:7.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
+                      f"Predicted R @{t['set'] if t['set'] is not None else ir_real(60):.1f}C {pred:5.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
             self.sp_vars[2].set(f"{pred:g}")
             self.src_var.set(2)
             self.send(f"sp 2 {pred:g}")
@@ -302,8 +303,8 @@ if __name__ == "__main__":
     rows = [[f"{i * 0.2:.1f}", "", 30, 30, 300 + 100 * i * 0.2, 10.0, 30.0, 100, 0, 0] for i in range(10)]
     s, r0, p = pulse_features(rows)
     assert abs(s - 100) < 1e-6 and r0 == 300 and abs(p - 300) < 1e-9
-    assert abs(predict_r(60, 100, 300, 300) - (102.7 * math.log(100) + 78.1)) < 1e-9
-    assert abs(predict_r(70, 100, 300, 300) - (103.0 * math.log(100) + 151.9)) < 1e-9
+    assert abs(predict_r(ir_real(60), 100, 300, 300) - (102.68 * math.log(100) + 78.13)) < 0.05
+    assert abs(predict_r(ir_real(70), 100, 300, 300) - (102.99 * math.log(100) + 151.90)) < 0.05
     assert abs(ir_real(ir_sensor(45.0)) - 45.0) < 1e-9 and abs(ir_real(60) - 69.39) < 1e-9
     d = parse_data_real("not a data line")
     assert d is None
