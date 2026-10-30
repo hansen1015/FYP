@@ -16,6 +16,12 @@ Prediction (ln fits of before + after recovery data, actual R at 60 / 70 C again
   (dashed) from the live resistance once the pulse has set x; it uses no IR.
 The "Set to [temp] C" box (30-80 C) + Go runs R0 + pulse + prediction, then hold the predicted
 resistance for 20 s with the resistance PID: no IR, nothing recorded, heater off at the end. The thermocouple board is not used (no port, readout or plot line).
+
+IR temperature: real = 1.288 * IR_sensor - 7.89 (R2 0.995) is applied to every IR reading (readout, plot, CSV) and the
+IR setpoint typed in the GUI is real C, converted back to the sensor scale before it goes to the board (the board's
+PID still runs on the raw sensor). The R(60/70 C) fits were measured at raw sensor 60 / 70 (= real 69.4 / 82.2 C), so
+the model's temperatures are on the sensor scale: "Set to" and the predicted-T line convert real <-> sensor, and the
+test's two IR holds stay at sensor 60 / 70 so prediction.csv keeps comparing like with like.
 """
 
 import csv
@@ -42,6 +48,28 @@ R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 
 # R = a(T) ln(x) + b(T): the 60 C and 70 C fits joined linearly in T (valid about 40-90 C, outside that is extrapolation)
 A0, A1, B0, B1 = 100.9, 0.03, -364.7, 7.38
+IR_GAIN, IR_OFFSET = 1.288, -7.89  # real C = IR_GAIN * sensor + IR_OFFSET
+
+
+def ir_real(sensor):
+    return IR_GAIN * sensor + IR_OFFSET
+
+
+def ir_sensor(real):
+    return (real - IR_OFFSET) / IR_GAIN
+
+
+_parse_data = gui.parse_data
+
+
+def parse_data_real(line):  # gui.py's reader calls gui.parse_data: correct the IR value once, here
+    d = _parse_data(line)
+    if d is not None:
+        d["ir"] = ir_real(d["ir"])
+    return d
+
+
+gui.parse_data = parse_data_real
 SET_RANGE = (30.0, 80.0)  # allowed temperatures for "Set to" (C)
 
 
@@ -75,6 +103,14 @@ class TestApp(App):
     MANUAL_PWM = False
     USE_TC = False
 
+    def send(self, text):  # the IR setpoint is typed in real C, the board's PID runs on the raw sensor
+        if text.startswith("sp 0 "):
+            try:
+                text = f"sp 0 {ir_sensor(float(text.split()[2])):g}"
+            except (ValueError, IndexError):
+                pass
+        return super().send(text)
+
     def _build_plot(self):
         super()._build_plot()
         self.x_pulse = None  # dR/dt * R0 / P of the running test, set when the pulse ends
@@ -83,7 +119,7 @@ class TestApp(App):
 
     def redraw(self):
         if self.x_pulse and self.times:
-            pts = [(t, predict_temp(r, self.x_pulse)) for t, r in zip(self.times, self.res)
+            pts = [(t, ir_real(predict_temp(r, self.x_pulse))) for t, r in zip(self.times, self.res)
                    if t >= T_R0 + T_PULSE and math.isfinite(r) and r > 0]
             self.ln_pt.set_data([p[0] for p in pts], [p[1] for p in pts])
         else:
@@ -196,7 +232,7 @@ class TestApp(App):
                 return
             drdt, _, p = feat
             r0 = t["r0"]  # read at 5 % PWM, not the first pulse sample
-            pred = predict_r(t["set"] if t["set"] is not None else 60, drdt, r0, p)
+            pred = predict_r(ir_sensor(t["set"]) if t["set"] is not None else 60, drdt, r0, p)  # model is on the sensor scale
             if not R_OK[0] < pred < R_OK[1]:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
@@ -232,11 +268,12 @@ class TestApp(App):
         elif t["phase"] == "ir70" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60 + T_IR70:
             self.finish_test(now)
 
-    def set_ir(self, target, secs):
-        self.note(f"holding IR {target:g} C for {secs:.0f} s ...")
-        self.sp_vars[0].set(f"{target:g}")
+    def set_ir(self, target, secs):  # target on the sensor scale (as the fits were measured)
+        real = ir_real(target)
+        self.note(f"holding IR {real:.1f} C (sensor {target:g}) for {secs:.0f} s ...")
+        self.sp_vars[0].set(f"{real:.2f}")
         self.src_var.set(0)
-        self.send(f"sp 0 {target:g}")
+        self.send(f"sp 0 {real:.2f}")
         self.send("src 0")
         self.send("auto 1")
 
@@ -267,6 +304,9 @@ if __name__ == "__main__":
     assert abs(s - 100) < 1e-6 and r0 == 300 and abs(p - 300) < 1e-9
     assert abs(predict_r(60, 100, 300, 300) - (102.7 * math.log(100) + 78.1)) < 1e-9
     assert abs(predict_r(70, 100, 300, 300) - (103.0 * math.log(100) + 151.9)) < 1e-9
+    assert abs(ir_real(ir_sensor(45.0)) - 45.0) < 1e-9 and abs(ir_real(60) - 69.39) < 1e-9
+    d = parse_data_real("not a data line")
+    assert d is None
     assert abs(predict_temp(predict_r(65, 100, 300, 300), 100) - 65) < 1e-9  # inverse
     assert pulse_features(rows[:3]) is None and math.isnan(mean([float("nan")]))
     root = tk.Tk()
