@@ -19,10 +19,10 @@ for folder, color in DIRS.items():
         for ax, y in zip(axs, (p, blk.voltage_V, blk.current_mA)):
             ax.plot(t, y, c=color, alpha=.5, lw=1, label=folder if first else None)
         first = False
-        rows += [(folder, os.path.basename(f), tt, pp, v, i) for tt, pp, v, i in zip(t, p, blk.voltage_V, blk.current_mA)]
+        rows += [(folder, os.path.basename(f), tt, pp, v, i, r) for tt, pp, v, i, r in zip(t, p, blk.voltage_V, blk.current_mA, blk.resistance_ohm)]
 for ax, lab in zip(axs, ("Power (mW)", "Voltage (V)", "Current (mA)")):
     ax.set_ylabel(lab); ax.grid(alpha=.3)
 axs[0].legend(); axs[-1].set_xlabel("Time since the 100 % PWM pulse started (s)")
 fig.tight_layout(); fig.savefig(os.path.join(HERE, "power_during_pulse.png"), dpi=140)
-out = pd.DataFrame(rows, columns=["folder", "run", "t_s", "power_mW", "voltage_V", "current_mA"]); out.to_csv(os.path.join(HERE, "power_during_pulse.csv"), index=False)
+out = pd.DataFrame(rows, columns=["folder", "run", "t_s", "power_mW", "voltage_V", "current_mA", "resistance_ohm"]); out.to_csv(os.path.join(HERE, "power_during_pulse.csv"), index=False)
 print(out.groupby("folder").run.nunique(), out.groupby("folder").t_s.max(), out.groupby("folder").power_mW.agg(["mean", "min", "max"]).round(0))

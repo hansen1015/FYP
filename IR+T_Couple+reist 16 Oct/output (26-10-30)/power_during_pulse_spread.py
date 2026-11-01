@@ -1,4 +1,4 @@
-"""Spread version of power_during_pulse.png: both folders pooled, mean line with the 25-75 % quartile band of power, voltage and current.
+"""Spread version of power_during_pulse.png: both folders pooled, mean line with the 25-75 % quartile band of power, voltage, current and resistance.
 Reads power_during_pulse.csv; each run is interpolated onto a common 0.1 s grid (only where the run has data)."""
 import os
 import numpy as np, pandas as pd, matplotlib
@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 HERE = os.path.dirname(os.path.abspath(__file__))
 d = pd.read_csv(os.path.join(HERE, "power_during_pulse.csv"))
 grid = np.arange(0, 1.81, 0.1)
-cols = (("power_mW", "Power (mW)"), ("voltage_V", "Voltage (V)"), ("current_mA", "Current (mA)"))
-fig, axs = plt.subplots(3, 1, figsize=(9, 10), sharex=True)
+cols = (("power_mW", "Power (mW)"), ("voltage_V", "Voltage (V)"), ("current_mA", "Current (mA)"), ("resistance_ohm", "Resistance (Ω)"))
+fig, axs = plt.subplots(4, 1, figsize=(9, 12.5), sharex=True)
 for ax, (c, _) in zip(axs, cols):
     m = np.array([np.interp(grid, g.t_s, g[c], left=np.nan, right=np.nan) for _, g in d.groupby(["folder", "run"])])
     q1, q3 = np.nanpercentile(m, [25, 75], axis=0)
