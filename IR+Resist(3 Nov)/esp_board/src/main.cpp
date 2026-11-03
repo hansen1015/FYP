@@ -1,21 +1,20 @@
 /*
  * ESP32-S3 SuperMini: INA3221 (resistance) + GY-906 (IR temp) + MOSFET heater PWM (GPIO8).
  *
- * One PID drives the heater. Its process variable is chosen from 4 inputs:
- *   0 = IR temperature (degC), 1 = resistance (ohm), 2 = electrical power V*I (mW, from the INA3221),
- *   3 = heater current (mA, from the INA3221)
+ * One PID drives the heater. Its process variable is chosen from 3 inputs:
+ *   0 = IR temperature (degC), 1 = resistance (ohm), 2 = electrical power V*I (mW, from the INA3221)
  * Each input keeps its own setpoint and gains. out% = kp*e + ki*integral(e) + kd*(-dPV/dt),
  * e = setpoint - PV (heater heats when PV is below setpoint). Nothing is saved to flash:
  * the PC GUI pushes the settings after connecting. After a reset the heater is off / manual.
  *
  * Serial out (115200), every 200 ms:
- *   DATA <ms> <V> <mA> <mW> <ohm> <ambient C> <IR C> <pwm %> <auto 0/1> <src 0-3>
+ *   DATA <ms> <V> <mA> <mW> <ohm> <ambient C> <IR C> <pwm %> <auto 0/1> <src 0-2>
  *   CFG <src> <kp> <ki> <kd> <sp>        (reply to "get")
  *   OK ... / ERR ...
  * Serial in (newline terminated):
  *   pwm <0-100>             manual PWM %, leaves auto mode
  *   auto <0|1>              PID on/off
- *   src <0-3>               choose PID input
+ *   src <0-2>               choose PID input
  *   sp <src> <value>        setpoint of that input
  *   pid <src> <kp> <ki> <kd>
  *   hb                      heartbeat; the GUI sends it every cycle
@@ -55,7 +54,7 @@ const float BUS_VOLTS_PER_LSB = 0.008f;     // 8mV
 #define PWM_BITS 12                   // finer than 8 bit
 #define LOOP_MS 200
 
-enum Src { SRC_IR, SRC_RES, SRC_POW, SRC_CUR, NUM_SRC };
+enum Src { SRC_IR, SRC_RES, SRC_POW, NUM_SRC };
 
 struct Pid {
   float kp, ki, kd, sp;
@@ -67,7 +66,6 @@ Pid pid[NUM_SRC] = {
     {5.0f, 0.05f, 0.0f, 0.0f, 0, 0, false},  // IR
     {0.5f, 0.0f, 0.0f, 0.0f, 0, 0, false},   // resistance
     {0.3f, 0.5f, 0.0f, 0.0f, 0, 0, false},   // power (mW -> %: about 3 mW per % at the working point)
-    {1.0f, 2.0f, 0.0f, 0.0f, 0, 0, false},   // current (mA -> %: about 0.3 mA per %, untuned)
 };
 Src activeSrc = SRC_IR;
 bool autoMode = false;
@@ -243,8 +241,7 @@ void loop() {
     switch (activeSrc) {
       case SRC_IR: pv = objectTemp; break;
       case SRC_RES: pv = resistance; break;
-      case SRC_POW: pv = power * 1000.0f; break;  // mW
-      default: pv = current * 1000.0f; break;     // SRC_CUR, mA (current is in A here)
+      default: pv = power * 1000.0f; break;  // SRC_POW, mW
     }
     if (!isnan(pv)) {
       setHeater(runPid(pid[activeSrc], pv, dt));
