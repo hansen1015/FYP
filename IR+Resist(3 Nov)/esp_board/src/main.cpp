@@ -1,24 +1,22 @@
 /*
  * ESP32-S3 SuperMini: INA3221 (resistance) + GY-906 (IR temp) + MOSFET heater PWM (GPIO8).
  *
- * One PID drives the heater. Its process variable is chosen from 4 inputs:
- *   0 = IR temperature (degC), 1 = thermocouple (degC, forwarded by the PC), 2 = resistance (ohm),
- *   3 = electrical power V*I (mW, from the INA3221)
+ * One PID drives the heater. Its process variable is chosen from 3 inputs:
+ *   0 = IR temperature (degC), 1 = resistance (ohm), 2 = electrical power V*I (mW, from the INA3221)
  * Each input keeps its own setpoint and gains. out% = kp*e + ki*integral(e) + kd*(-dPV/dt),
  * e = setpoint - PV (heater heats when PV is below setpoint). Nothing is saved to flash:
  * the PC GUI pushes the settings after connecting. After a reset the heater is off / manual.
  *
  * Serial out (115200), every 200 ms:
- *   DATA <ms> <V> <mA> <mW> <ohm> <ambient C> <IR C> <pwm %> <auto 0/1> <src 0-3>
+ *   DATA <ms> <V> <mA> <mW> <ohm> <ambient C> <IR C> <pwm %> <auto 0/1> <src 0-2>
  *   CFG <src> <kp> <ki> <kd> <sp>        (reply to "get")
  *   OK ... / ERR ...
  * Serial in (newline terminated):
  *   pwm <0-100>             manual PWM %, leaves auto mode
  *   auto <0|1>              PID on/off
- *   src <0-3>               choose PID input
+ *   src <0-2>               choose PID input
  *   sp <src> <value>        setpoint of that input
  *   pid <src> <kp> <ki> <kd>
- *   tc <degC>               thermocouple reading from the PC
  *   hb                      heartbeat; the GUI sends it every cycle
  *
  * Host watchdog: no complete line from the PC for HOST_TIMEOUT_MS -> auto off, heater 0.
@@ -51,13 +49,12 @@ const float BUS_VOLTS_PER_LSB = 0.008f;     // 8mV
 #define HEATER_PIN 8
 #define HEATER_PWM_FREQ_HZ 1000
 #define HEATER_MAX_SAFE_TEMP_C 100.0f  // IR above this forces the heater off in every mode
-#define TC_TIMEOUT_MS 3000            // src 1: no "tc" update for this long -> heater off
 #define MIN_PWM_PCT 4.0f              // PID and manual never drive below this (resistance stays measurable); 0 = off
 #define HOST_TIMEOUT_MS 2000
 #define PWM_BITS 12                   // finer than 8 bit
 #define LOOP_MS 200
 
-enum Src { SRC_IR, SRC_TC, SRC_RES, SRC_POW, NUM_SRC };
+enum Src { SRC_IR, SRC_RES, SRC_POW, NUM_SRC };
 
 struct Pid {
   float kp, ki, kd, sp;
@@ -67,15 +64,12 @@ struct Pid {
 
 Pid pid[NUM_SRC] = {
     {5.0f, 0.05f, 0.0f, 0.0f, 0, 0, false},  // IR
-    {5.0f, 0.05f, 0.0f, 0.0f, 0, 0, false},  // thermocouple
     {0.5f, 0.0f, 0.0f, 0.0f, 0, 0, false},   // resistance
     {0.3f, 0.5f, 0.0f, 0.0f, 0, 0, false},   // power (mW -> %: about 3 mW per % at the working point)
 };
 Src activeSrc = SRC_IR;
 bool autoMode = false;
 float pwmPct = 0;
-float tcTemp = NAN;
-uint32_t lastTcMs = 0;
 uint32_t lastRxMs = 0;
 
 void setHeater(float pct) {
@@ -183,9 +177,6 @@ void handleCommand(const char *line) {
     pid[s].kd = c;
     resetPid(pid[s]);
     Serial.printf("OK: pid %d %g %g %g\n", s, a, b, c);
-  } else if (sscanf(line, "tc %f", &a) == 1) {
-    tcTemp = a;
-    lastTcMs = millis();
   } else if (strncmp(line, "get", 3) == 0) {
     for (int i = 0; i < NUM_SRC; i++) printCfg(i);
     Serial.printf("MODE %d %d\n", activeSrc, autoMode ? 1 : 0);
@@ -249,7 +240,6 @@ void loop() {
     float pv;
     switch (activeSrc) {
       case SRC_IR: pv = objectTemp; break;
-      case SRC_TC: pv = (now - lastTcMs < TC_TIMEOUT_MS) ? tcTemp : NAN; break;
       case SRC_RES: pv = resistance; break;
       default: pv = power * 1000.0f; break;  // SRC_POW, mW
     }
