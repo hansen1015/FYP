@@ -117,6 +117,16 @@ class TestApp(App):
         self.x_pulse = None  # dR/dt * R0 / P of the running test, set when the pulse ends
         self.ln_pt, = self.ax_t.plot([], [], color="#911eb4", ls="--", label="Predicted T (from R)")
         self.ax_t.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0, fontsize=8)
+        gs = self.fig.add_gridspec(4, 1, left=0.09, right=0.80, top=0.97, bottom=0.08, hspace=0.12)  # power panel under PWM
+        for ax, row in zip((self.ax_t, self.ax_r, self.ax_p), gs):
+            ax.set_subplotspec(row)
+        self.ax_w = self.fig.add_subplot(gs[3], sharex=self.ax_p)
+        self.ax_w.set_ylabel("Power (mW)")
+        self.ax_w.set_xlabel("Time (s)")
+        self.ax_w.grid(True, alpha=0.3)
+        self.ax_p.set_xlabel("")
+        self.ax_p.tick_params(labelbottom=False)
+        self.ln_pw, = self.ax_w.plot([], [], color="#42d4f4")
 
     def redraw(self):
         if self.x_pulse and self.times:
@@ -126,8 +136,18 @@ class TestApp(App):
         else:
             self.ln_pt.set_data([], [])
         super().redraw()
-        lo, hi = self.ax_t.get_ylim()
         xmin = self.ax_p.get_xlim()[0]
+        pw = []  # power = V * mA (mW) from the log, over the plotted window
+        for r in reversed(self.log):
+            if float(r[0]) < xmin:
+                break
+            pw.append((float(r[0]), r[5] * r[6]))
+        self.ln_pw.set_data([p[0] for p in pw], [p[1] for p in pw])
+        if pw:
+            lo_w, hi_w = min(p[1] for p in pw), max(p[1] for p in pw)
+            pad = max(1.0, (hi_w - lo_w) * 0.1)
+            self.ax_w.set_ylim(lo_w - pad, hi_w + pad)
+        lo, hi = self.ax_t.get_ylim()
         vis = [v for t, v in zip(*self.ln_pt.get_data()) if t >= xmin and math.isfinite(v)] if self.x_pulse else []
         if vis:
             self.ax_t.set_ylim(min(lo, min(vis) - 1), max(hi, max(vis) + 1))
