@@ -1,3 +1,4 @@
 sample,dR_dt_ohm_s,pulse_power_setpoint_mW,initial_resistance_ohm,pulse_power_measured_mW,actual_R50_ohm,actual_R60_ohm,actual_R70_ohm
 S1,35.4700,800.000,298.166,678.4,335.998,388.735,430.425
 S1,33.8893,800.000,289.828,683.1,337.977,388.320,434.927
+S1,33.2186,800.000,263.966,688.7,345.625,393.756,434.315

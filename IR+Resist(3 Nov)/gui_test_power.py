@@ -5,7 +5,7 @@ Nothing is driven by a typed PWM %: every phase is a PID setpoint (PID inputs: 0
 
 "Gather data" (needs a serial no.):
   0-3 s    power PID at R0_POWER_MW = 20 mW: R0 = mean R of the last second
-  3-7 s    power PID at P_PULSE_MW = 800 mW for 4 s: measure dR/dt (the measured mean power is only logged)
+  3-5 s    power PID at P_PULSE_MW = 800 mW for 2 s: measure dR/dt (the measured mean power is only logged)
   then     IR PID holds 50, 60 and 70 C for 20 s each; actual R(T) = mean R of the last 5 s of each hold
 then one row is appended to output/gather_data.csv and the time-series CSV + png of the run are saved. No prediction is made.
 
@@ -57,7 +57,7 @@ SRC = {"ir": 0, "res": 1, "pow": 2}  # PID inputs in the firmware
 SRC_NAMES = ["IR temp (°C)", "Resistance (Ω)", "Power (mW)"]
 SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0.5", "0")]  # SP, Kp, Ki, Kd
 
-T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 4.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
+T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
 R0_POWER_MW = 20.0  # R0 is read with the power PID at this setpoint
 P_PULSE_MW = 800.0  # constant power of the dR/dt pulse, also the P in x = dR/dt * R0 / P
 T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
