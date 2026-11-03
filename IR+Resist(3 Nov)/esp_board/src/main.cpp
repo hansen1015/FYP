@@ -207,10 +207,12 @@ void setup() {
   Serial.begin(115200);
   Wire.begin(I2C_SDA, I2C_SCL);
 
-  // INA3221: all 3 channels enabled, continuous shunt+bus conversion
+  // INA3221: all 3 channels enabled, continuous shunt+bus conversion, 1.1 ms each, averaged over 16 samples
+  // (config 0x7527: AVG bits 11-9 = 010). One cycle = 3 ch * 2.2 ms * 16 = about 106 ms, so every reading is a mean over
+  // about 100 PWM periods and fits the 200 ms loop; it lags the heater by roughly 50 ms.
   Wire.beginTransmission(INA3221_ADDR);
   Wire.write(INA3221_REG_CONFIG);
-  Wire.write(0x71);
+  Wire.write(0x75);
   Wire.write(0x27);
   Wire.endTransmission();
 
