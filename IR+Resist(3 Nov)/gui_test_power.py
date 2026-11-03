@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
 Power-controlled data gathering + R(T) prediction check for the ESP board (esp_board/ in this folder). One file, no thermocouple.
-Nothing is driven by a typed PWM %: every phase is a PID setpoint (PID inputs: 0 IR, 1 resistance, 2 power).
+Nothing is driven by a typed PWM %: every phase is a PID setpoint (PID inputs: 0 IR, 1 resistance, 2 power, 3 current).
 
 "Gather data" (needs a serial no.):
-  0-3 s    power PID at R0_POWER_MW (about 1 mW, i.e. the firmware's minimum duty): R0 = mean R of the last second
-  3-5 s    power PID at P_PULSE_MW = 300 mW: measure dR/dt (the measured mean power is only logged)
+  0-3 s    current PID at R0_CURRENT_MA = 20 mA: R0 = mean R of the last second
+  3-7 s    power PID at P_PULSE_MW = 300 mW for 4 s: measure dR/dt (the measured mean power is only logged)
   then     IR PID holds 50, 60 and 70 C for 20 s each; actual R(T) = mean R of the last 5 s of each hold
 then one row is appended to output/gather_data.csv and the time-series CSV + png of the run are saved. No prediction is made.
 
@@ -53,12 +53,12 @@ DATA_HEADER = ["sample", "dR_dt_ohm_s", "pulse_power_setpoint_mW", "initial_resi
                *(f"actual_R{t:g}_ohm" for t in IR_TEMPS)]
 CSV_HEADER = ["serial_number", "time_s", "timestamp", "ir_C", "resistance_ohm", "voltage_V", "current_mA",
               "power_mW", "pwm_pct", "pid_auto", "pid_input"]
-SRC = {"ir": 0, "res": 1, "pow": 2}  # PID inputs in the firmware
-SRC_NAMES = ["IR temp (°C)", "Resistance (Ω)", "Power (mW)"]
-SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0.5", "0")]  # SP, Kp, Ki, Kd
+SRC = {"ir": 0, "res": 1, "pow": 2, "cur": 3}  # PID inputs in the firmware
+SRC_NAMES = ["IR temp (°C)", "Resistance (Ω)", "Power (mW)", "Current (mA)"]
+SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0.5", "0"), ("0", "1", "2", "0")]  # SP, Kp, Ki, Kd
 
-T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
-R0_POWER_MW = 1.0   # R0 read: tiny power setpoint, the firmware's 4 % minimum duty keeps the current flowing
+T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 4.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
+R0_CURRENT_MA = 20.0  # R0 is read with the current PID at this setpoint
 P_PULSE_MW = 300.0  # constant power of the dR/dt pulse, also the P in x = dR/dt * R0 / P
 T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
@@ -401,7 +401,7 @@ class App:
         self.clear_data()  # time 0 = start of the low-power R0 read
         self.auto_var.set(False)
         self.send("auto 0")
-        self.hold("pow", R0_POWER_MW)
+        self.hold("cur", R0_CURRENT_MA)
         name = f"set {set_temp:g} C" if set_temp is not None else self.serial_var.get().strip()
         self.note(f"--- {name}  {datetime.now():%H:%M:%S} ---")
         self.test = {"phase": "r0", "set": set_temp}
@@ -431,7 +431,7 @@ class App:
         if t["phase"] == "r0" and now >= T_R0:
             r0 = mean([r[3] for r in self.rows(T_R0 - 1, T_R0)])
             if not r0 > 0:
-                self.abort_test(f"no resistance reading at {R0_POWER_MW:g} mW")
+                self.abort_test(f"no resistance reading at {R0_CURRENT_MA:g} mA")
                 return
             t.update(phase="pulse", r0=r0)
             self.hold("pow", P_PULSE_MW)
@@ -442,7 +442,7 @@ class App:
                 return
             drdt, _, p_meas = feat
             p = P_PULSE_MW  # constant-power pulse: P in x is the setpoint
-            r0 = t["r0"]  # read at the low-power setpoint, not the first pulse sample
+            r0 = t["r0"]  # read at the R0 current setpoint, not the first pulse sample
             self.x_pulse = drdt * r0 / p
             t.update(drdt=drdt, p=p, p_meas=p_meas)
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
