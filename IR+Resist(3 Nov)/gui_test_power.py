@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
 """
-Power-controlled R(60 C) prediction test for the ESP board (esp_board/ in this folder). One file, no thermocouple.
+Power-controlled data gathering + R(T) prediction check for the ESP board (esp_board/ in this folder). One file, no thermocouple.
 Nothing is driven by a typed PWM %: every phase is a PID setpoint (PID inputs: 0 IR, 1 resistance, 2 power).
 
+"Gather data" (needs a serial no.):
   0-3 s    power PID at R0_POWER_MW (about 1 mW, i.e. the firmware's minimum duty): R0 = mean R of the last second
-  3-5 s    power PID at P_PULSE_MW = 300 mW: measure dR/dt; P in x is that constant 300 mW (the measured mean is only logged)
-  5-25 s   resistance PID holds the predicted R(60 C); the IR is recorded at the end
-  25-45 s  IR PID holds 60 C; actual R(60 C) = mean R of the last 5 s
-  45-65 s  IR PID holds 70 C; actual R(70 C) = mean R of the last 5 s
+  3-5 s    power PID at P_PULSE_MW = 300 mW: measure dR/dt (the measured mean power is only logged)
+  then     IR PID holds 50, 60 and 70 C for 20 s each; actual R(T) = mean R of the last 5 s of each hold
+then one row is appended to output/gather_data.csv and the time-series CSV + png of the run are saved. No prediction is made.
 
-then one row is appended to output/prediction.csv and the time-series CSV + png of the run are saved.
 "Set to [temp] C" + Go runs R0 + pulse + prediction, then holds the predicted resistance for 20 s with the
 resistance PID: no IR, nothing recorded, heater off at the end.
 
-Prediction: ln fits of R against x = dR/dt * R0 / P, joined linearly in real T:
+Prediction (Set to only): ln fits of R against x = dR/dt * R0 / P, joined linearly in real T:
   R(T) = (100.99 + 0.02436 T) * ln(x) + (-319.30 + 5.727 T), T = (R - 100.99 ln(x) + 319.30) / (0.02436 ln(x) + 5.727)
 The temperature panel shows this predicted T (dashed) from the live resistance once the pulse has set x; it uses no IR.
 NOTE: those constants were measured with 100 % PWM pulses (P = mean measured power), not this constant-power pulse:
-treat the predictions as a placeholder and refit on prediction.csv rows recorded with this GUI.
+treat the predictions as a placeholder and refit on gather_data.csv rows recorded with this GUI.
 
 IR temperature: real = 1.288 * IR_sensor - 7.89 (R2 0.995) is applied to every IR reading (readout, plot, CSV); the IR
 setpoint typed here is real C and converted back to the sensor scale before it goes to the board (whose PID runs on the raw sensor).
@@ -48,19 +47,20 @@ UPDATE_MS = 200
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "output")
 SETTINGS = os.path.join(HERE, "gui_test_settings.json")
-PRED_CSV = os.path.join(OUT_DIR, "prediction.csv")
-PRED_HEADER = ["sample", "dR_dt_ohm_s", "pulse_power_setpoint_mW", "initial_resistance_ohm",
-               "predicted_R60_ohm", "actual_R60_ohm", "actual_R70_ohm", "ir_at_predicted_R_C", "pulse_power_measured_mW"]
+DATA_CSV = os.path.join(OUT_DIR, "gather_data.csv")
+IR_TEMPS = (50.0, 60.0, 70.0)  # real C, held in this order by Gather data
+DATA_HEADER = ["sample", "dR_dt_ohm_s", "pulse_power_setpoint_mW", "initial_resistance_ohm", "pulse_power_measured_mW",
+               *(f"actual_R{t:g}_ohm" for t in IR_TEMPS)]
 CSV_HEADER = ["serial_number", "time_s", "timestamp", "ir_C", "resistance_ohm", "voltage_V", "current_mA",
               "power_mW", "pwm_pct", "pid_auto", "pid_input"]
 SRC = {"ir": 0, "res": 1, "pow": 2}  # PID inputs in the firmware
 SRC_NAMES = ["IR temp (°C)", "Resistance (Ω)", "Power (mW)"]
 SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0.5", "0")]  # SP, Kp, Ki, Kd
 
-T_R0, T_PULSE, T_RHOLD, T_IR60, T_IR70 = 3.0, 2.0, 20.0, 20.0, 20.0  # phase lengths (s)
+T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
 R0_POWER_MW = 1.0   # R0 read: tiny power setpoint, the firmware's 4 % minimum duty keeps the current flowing
 P_PULSE_MW = 300.0  # constant power of the dR/dt pulse, also the P in x = dR/dt * R0 / P
-T_AVG = 5.0  # actual R60 / R70 = mean over the last T_AVG s of each IR hold
+T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 SET_RANGE = (30.0, 80.0)  # allowed temperatures for "Set to" (C)
 
@@ -120,7 +120,7 @@ def mean(vals):
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("Power-controlled prediction test: R(60 C)")
+        root.title("Power-controlled data gathering: R(T)")
         root.geometry("1300x900")
         self.ser = None
         self.stop_reader = threading.Event()
@@ -180,7 +180,7 @@ class App:
             self.read_lbl[key] = lbl
 
     def _build_results(self):
-        w = ttk.LabelFrame(self.mid, text="Prediction results")
+        w = ttk.LabelFrame(self.mid, text="Results")
         w.pack(side="right", fill="y", padx=(4, 8), pady=4)
         self.result_text = tk.Text(w, wrap="word", width=38, state="disabled", font=("TkFixedFont", 10))
         self.result_text.pack(fill="both", expand=True, padx=6, pady=6)
@@ -241,12 +241,12 @@ class App:
     def _build_test_bar(self):
         f = ttk.Frame(self.root)
         f.pack(fill="x", padx=8, pady=(0, 6))
-        ttk.Button(f, text="Start prediction test", command=self.start_test).pack(side="left")
+        ttk.Button(f, text="Gather data", command=self.start_test).pack(side="left")
         self.set_var = tk.StringVar(value="60")
         ttk.Label(f, text="Set to").pack(side="left", padx=(10, 2))
         ttk.Entry(f, textvariable=self.set_var, width=5).pack(side="left")
         ttk.Button(f, text="°C  Go", command=self.start_set).pack(side="left", padx=(2, 0))
-        self.test_var = tk.StringVar(value="Prediction test: idle (ALL OFF aborts it)")
+        self.test_var = tk.StringVar(value="Idle (ALL OFF aborts a run)")
         ttk.Label(f, textvariable=self.test_var).pack(side="left", padx=10)
 
     def note(self, text):
@@ -416,7 +416,7 @@ class App:
         self.auto_var.set(False)
         self.send("auto 0")
         self.send("pwm 0")
-        self.test_var.set(f"Prediction test: aborted ({why}), heater off")
+        self.test_var.set(f"Aborted ({why}), heater off")
         self.note(f"aborted: {why}\n")
 
     def run_test(self):
@@ -427,7 +427,7 @@ class App:
             self.abort_test("ESP disconnected")
             return
         now = time.time() - self.t0
-        self.test_var.set(f"Prediction test: {t['phase']} ({now:.0f} s)")
+        self.test_var.set(f"{t['phase']} ({now:.0f} s)")
         if t["phase"] == "r0" and now >= T_R0:
             r0 = mean([r[3] for r in self.rows(T_R0 - 1, T_R0)])
             if not r0 > 0:
@@ -443,61 +443,58 @@ class App:
             drdt, _, p_meas = feat
             p = P_PULSE_MW  # constant-power pulse: P in x is the setpoint
             r0 = t["r0"]  # read at the low-power setpoint, not the first pulse sample
-            temp = t["set"] if t["set"] is not None else 60
-            pred = predict_r(temp, drdt, r0, p)
+            self.x_pulse = drdt * r0 / p
+            t.update(drdt=drdt, p=p, p_meas=p_meas)
+            self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
+                      f"Power set    {p:8.1f} mW (measured {p_meas:.1f})\ndR/dt*R0/P   {self.x_pulse:8.2f}")
+            if t["set"] is None:  # Gather data: straight to the IR holds
+                t.update(phase="ir", k=0, actual=[])
+                self.set_ir(IR_TEMPS[0], T_IR)
+                return
+            pred = predict_r(t["set"], drdt, r0, p)
             if not R_OK[0] < pred < R_OK[1]:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
-            t.update(phase="rhold", drdt=drdt, p=p, p_meas=p_meas, pred=pred)
-            self.x_pulse = drdt * r0 / p
-            self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
-                      f"Power set    {p:8.1f} mW (measured {p_meas:.1f})\ndR/dt*R0/P   {self.x_pulse:8.2f}\n"
-                      f"Predicted R @{temp:g}C {pred:5.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
+            t.update(phase="rhold", pred=pred)
+            self.note(f"Predicted R @{t['set']:g}C {pred:5.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
             self.hold("res", pred)
-        elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:
-            if t["set"] is not None:
-                self.test = None
-                self.auto_var.set(False)
-                self.send("auto 0")
-                self.send("pwm 0")
-                self.note("done, heater off\n")
-                self.test_var.set(f"Set to {t['set']:g} C: done, heater off")
-                return
-            last = self.rows(now - 2, now)  # last 2 s of the resistance hold
-            t.update(phase="ir60", ir_pred=mean([r[2] for r in last]))
-            self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C")
-            self.set_ir(60.0, T_IR60)
-        elif t["phase"] == "ir60" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60:
-            t.update(phase="ir70", actual60=mean([r[3] for r in self.rows(now - T_AVG, now)]))
-            self.note(f"Actual R60      {t['actual60']:7.1f} ohm\nPred - actual  {t['pred'] - t['actual60']:+7.1f} ohm "
-                      f"({(t['pred'] / t['actual60'] - 1) * 100:+.1f} %)")
-            self.set_ir(70.0, T_IR70)
-        elif t["phase"] == "ir70" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60 + T_IR70:
-            self.finish_test(now)
+        elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:  # Set to: done
+            self.test = None
+            self.auto_var.set(False)
+            self.send("auto 0")
+            self.send("pwm 0")
+            self.note("done, heater off\n")
+            self.test_var.set(f"Set to {t['set']:g} C: done, heater off")
+        elif t["phase"] == "ir" and now >= T_R0 + T_PULSE + (t["k"] + 1) * T_IR:
+            r = mean([r[3] for r in self.rows(now - T_AVG, now)])
+            t["actual"].append(r)
+            self.note(f"Actual R{IR_TEMPS[t['k']]:g}      {r:7.1f} ohm")
+            t["k"] += 1
+            if t["k"] < len(IR_TEMPS):
+                self.set_ir(IR_TEMPS[t["k"]], T_IR)
+            else:
+                self.finish_test()
 
     def set_ir(self, target, secs):  # target in real C
         self.note(f"holding IR {target:g} C for {secs:.0f} s ...")
         self.hold("ir", target)
 
-    def finish_test(self, now):
+    def finish_test(self):
         t, self.test = self.test, None
-        actual70 = mean([r[3] for r in self.rows(now - T_AVG, now)])
         self.auto_var.set(False)
         self.send("auto 0")
         self.send("pwm 0")
         os.makedirs(OUT_DIR, exist_ok=True)
-        new = not os.path.exists(PRED_CSV)
-        with open(PRED_CSV, "a", newline="") as f:
+        new = not os.path.exists(DATA_CSV)
+        with open(DATA_CSV, "a", newline="") as f:
             w = csv.writer(f)
             if new:
-                w.writerow(PRED_HEADER)
+                w.writerow(DATA_HEADER)
             w.writerow([self.serial_var.get().strip(), f"{t['drdt']:.4f}", f"{t['p']:.3f}", f"{t['r0']:.3f}",
-                        f"{t['pred']:.3f}", f"{t['actual60']:.3f}", f"{actual70:.3f}", f"{t['ir_pred']:.2f}",
-                        f"{t['p_meas']:.1f}"])
+                        f"{t['p_meas']:.1f}", *(f"{r:.3f}" for r in t["actual"])])
         self.save_outputs()
-        self.note(f"Actual R70      {actual70:7.1f} ohm\n")
-        self.test_var.set(f"Prediction test done: predicted R60 {t['pred']:.1f}, actual R60 {t['actual60']:.1f}, "
-                          f"actual R70 {actual70:.1f} ohm")
+        self.note("")
+        self.test_var.set("Gather data done: " + ", ".join(f"R{T:g} {r:.1f}" for T, r in zip(IR_TEMPS, t["actual"])) + " ohm")
 
     # ---------- data ----------
     def clear_data(self):
