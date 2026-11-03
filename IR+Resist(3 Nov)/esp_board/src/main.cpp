@@ -50,7 +50,7 @@ const float BUS_VOLTS_PER_LSB = 0.008f;     // 8mV
 #define HEATER_PIN 8
 #define HEATER_PWM_FREQ_HZ 1000
 #define HEATER_MAX_SAFE_TEMP_C 100.0f  // IR above this forces the heater off in every mode
-#define MIN_PWM_PCT 4.0f              // PID and manual never drive below this (resistance stays measurable); 0 = off
+#define PROBE_PWM_PCT 4.0f            // only when the resistance PID has no reading (no current): probe duty so R becomes measurable
 #define HOST_TIMEOUT_MS 2000
 #define PWM_BITS 12                   // finer than 8 bit
 #define LOOP_MS 200
@@ -158,7 +158,7 @@ void handleCommand(const char *line) {
   if (strcmp(line, "hb") == 0) return;
   if (sscanf(line, "pwm %f", &a) == 1 && a >= 0 && a <= 100) {
     autoMode = false;
-    setHeater(a > 0 ? max(a, MIN_PWM_PCT) : 0);  // 0 stays a real off (ALL OFF, disconnect)
+    setHeater(a);
     Serial.printf("OK: pwm %g\n", pwmPct);
   } else if (sscanf(line, "auto %d", &n) == 1 && (n == 0 || n == 1)) {
     if (n && !autoMode) resetPid(pid[activeSrc]);
@@ -247,10 +247,10 @@ void loop() {
       default: pv = current * 1000.0f; break;     // SRC_CUR, mA (current is in A here)
     }
     if (!isnan(pv)) {
-      setHeater(max(runPid(pid[activeSrc], pv, dt), MIN_PWM_PCT));
+      setHeater(runPid(pid[activeSrc], pv, dt));
     } else if ((activeSrc == SRC_RES) && pid[activeSrc].sp > 0) {
-      // resistance is only measurable while current flows: keep the minimum duty
-      setHeater(MIN_PWM_PCT);
+      // resistance is only measurable while current flows: probe with a small duty
+      setHeater(PROBE_PWM_PCT);
     } else {
       resetPid(pid[activeSrc]);
       setHeater(0);
