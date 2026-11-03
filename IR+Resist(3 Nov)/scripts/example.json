@@ -1,0 +1,16 @@
+{
+ "segments": [
+  {
+   "start": 0,
+   "end": 10,
+   "input": "pow",
+   "target": 300
+  },
+  {
+   "start": 10.1,
+   "end": 30,
+   "input": "ir",
+   "target": 60
+  }
+ ]
+}

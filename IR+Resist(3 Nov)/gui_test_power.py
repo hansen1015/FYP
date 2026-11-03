@@ -1,0 +1,349 @@
+#!/usr/bin/env python3
+"""
+Power-controlled version of gui_test_prediction.py (firmware: esp_board/ here, PID input 3 = power in mW).
+Nothing is driven by a typed PWM %: every phase is a PID setpoint. Plus a "Start prediction test" button:
+
+  0-3 s    power PID at R0_POWER_MW (about 1 mW, i.e. the firmware's minimum duty): R0 = mean R of the last second
+  3-5 s    power PID at P_PULSE_MW = 300 mW: measure dR/dt; P in x is that constant 300 mW (the measured mean is only logged)
+  5-25 s   resistance PID holds the predicted R(60 C); the IR is recorded at the end
+  25-45 s  IR PID holds 60 C; actual R(60 C) = mean R of the last 5 s
+  45-65 s  IR PID holds 70 C; actual R(70 C) = mean R of the last 5 s
+
+then one row is appended to output/prediction.csv. The usual time-series CSV + png are saved too.
+Prediction (ln fits of before + after recovery data, R against x = dR/dt * R0 / P, measured at sensor IR 60 / 70
+  = real 69.39 / 82.27 C):  R(69.39 C) = 102.68 * ln(x) + 78.13,  R(82.27 C) = 102.99 * ln(x) + 151.90; in between
+  (and outside, extrapolated) they are joined linearly in real T:
+  R(T) = (100.99 + 0.02436 T) * ln(x) + (-319.30 + 5.727 T), so the temperature of any resistance is
+  T = (R - 100.99 ln(x) + 319.30) / (0.02436 ln(x) + 5.727). The plot's temperature panel shows this predicted T
+  (dashed) from the live resistance once the pulse has set x; it uses no IR.
+The "Set to [temp] C" box (30-80 C) + Go runs R0 + pulse + prediction, then hold the predicted
+resistance for 20 s with the resistance PID: no IR, nothing recorded, heater off at the end. The thermocouple board is not used (no port, readout or plot line).
+
+IR temperature: real = 1.288 * IR_sensor - 7.89 (R2 0.995) is applied to every IR reading (readout, plot, CSV) and the
+IR setpoint typed in the GUI is real C, converted back to the sensor scale before it goes to the board (the board's
+PID still runs on the raw sensor). Everything you see or type is real C. The R fits come from old runs held at sensor 60 / 70 and are
+written in real C (69.39 / 82.27). The test's IR holds are real 60 / 70 C from now on, so actual_R60 / actual_R70 in
+prediction.csv rows recorded before this change were at real 69.4 / 82.3 C.
+"""
+
+import csv
+import math
+import os
+import time
+from datetime import datetime
+from tkinter import messagebox, ttk
+import tkinter as tk
+
+import gui
+from gui import App
+
+gui.SETTINGS = os.path.join(gui.HERE, "gui_test_settings.json")  # keep gui.py's own settings untouched
+PRED_CSV = os.path.join(gui.OUT_DIR, "prediction.csv")
+PRED_HEADER = ["sample", "dR_dt_ohm_s", "pulse_power_setpoint_mW", "initial_resistance_ohm",
+               "predicted_R60_ohm", "actual_R60_ohm", "actual_R70_ohm", "ir_at_predicted_R_C", "pulse_power_measured_mW"]
+T_R0, T_PULSE, T_RHOLD, T_IR60, T_IR70 = 3.0, 2.0, 20.0, 20.0, 20.0  # phase lengths (s)
+R0_POWER_MW = 1.0   # R0 read: tiny power setpoint, the firmware's 4 % minimum duty keeps the current flowing
+P_PULSE_MW = 300.0  # constant power of the dR/dt pulse, also the P in x = dR/dt * R0 / P
+T_AVG = 5.0  # actual R60 / R70 = mean over the last T_AVG s of each IR hold
+R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
+# log rows from gui.py: [time_s, timestamp, ir, tc, ohm, volt, mA, pwm, auto, src]
+# NOTE: the A0..B1 fit below was measured with 100 % PWM pulses (P = mean measured power), not this constant-power pulse:
+# treat the predictions as a placeholder and refit on prediction.csv rows recorded with this GUI.
+
+
+# R = a(T) ln(x) + b(T), T in real C: the fits at real 69.39 and 82.27 C joined linearly in T (data only between those)
+A0, A1, B0, B1 = 100.9887, 0.024363, -319.2978, 5.72745
+IR_GAIN, IR_OFFSET = 1.288, -7.89  # real C = IR_GAIN * sensor + IR_OFFSET
+
+
+def ir_real(sensor):
+    return IR_GAIN * sensor + IR_OFFSET
+
+
+def ir_sensor(real):
+    return (real - IR_OFFSET) / IR_GAIN
+
+
+_parse_data = gui.parse_data
+
+
+def parse_data_real(line):  # gui.py's reader calls gui.parse_data: correct the IR value once, here
+    d = _parse_data(line)
+    if d is not None:
+        d["ir"] = ir_real(d["ir"])
+    return d
+
+
+gui.parse_data = parse_data_real
+SET_RANGE = (30.0, 80.0)  # allowed temperatures for "Set to" (C)
+
+
+def predict_r(temp, drdt, r0, p_mw):
+    return (A0 + A1 * temp) * math.log(drdt * r0 / p_mw) + B0 + B1 * temp
+
+
+def predict_temp(r, x):  # x = dR/dt * R0 / P of the pulse
+    lx = math.log(x)
+    return (r - A0 * lx - B0) / (A1 * lx + B1)
+
+
+def pulse_features(rows):
+    """Rows inside the 100 % pulse -> (dR/dt ohm/s, R0 ohm, mean power mW); None if unusable."""
+    pts = [(float(r[0]), r[4]) for r in rows if math.isfinite(r[4])]
+    if len(pts) < 5 or pts[-1][0] - pts[0][0] < 1.0:
+        return None
+    n = len(pts)
+    tm, rm = sum(t for t, _ in pts) / n, sum(r for _, r in pts) / n
+    slope = sum((t - tm) * (r - rm) for t, r in pts) / sum((t - tm) ** 2 for t, _ in pts)
+    p = sum(r[5] * r[6] for r in rows) / len(rows)  # V * mA = mW
+    return slope, pts[0][1], p
+
+
+def mean(vals):
+    vals = [v for v in vals if math.isfinite(v)]
+    return sum(vals) / len(vals) if vals else float("nan")
+
+
+class TestApp(App):
+    MANUAL_PWM = False
+    USE_TC = False
+
+    def send(self, text):  # the IR setpoint is typed in real C, the board's PID runs on the raw sensor
+        if text.startswith("sp 0 "):
+            try:
+                text = f"sp 0 {ir_sensor(float(text.split()[2])):g}"
+            except (ValueError, IndexError):
+                pass
+        return super().send(text)
+
+    def _build_plot(self):
+        super()._build_plot()
+        self.x_pulse = None  # dR/dt * R0 / P of the running test, set when the pulse ends
+        self.ln_pt, = self.ax_t.plot([], [], color="#911eb4", ls="--", label="Predicted T (from R)")
+        self.ax_t.legend(loc="upper left", bbox_to_anchor=(1.01, 1.0), borderaxespad=0, fontsize=8)
+        gs = self.fig.add_gridspec(4, 1, left=0.09, right=0.80, top=0.97, bottom=0.08, hspace=0.12)  # power panel under PWM
+        for ax, row in zip((self.ax_t, self.ax_r, self.ax_p), gs):
+            ax.set_subplotspec(row)
+        self.ax_w = self.fig.add_subplot(gs[3], sharex=self.ax_p)
+        self.ax_w.set_ylabel("Power (mW)")
+        self.ax_w.set_xlabel("Time (s)")
+        self.ax_w.grid(True, alpha=0.3)
+        self.ax_p.set_xlabel("")
+        self.ax_p.tick_params(labelbottom=False)
+        self.ln_pw, = self.ax_w.plot([], [], color="#42d4f4")
+        self.ln_sp_w, = self.ax_w.plot([], [], "k--", alpha=0.6)  # power setpoint while the power PID runs
+
+    def redraw(self):
+        if self.x_pulse and self.times:
+            pts = [(t, predict_temp(r, self.x_pulse)) for t, r in zip(self.times, self.res)
+                   if t >= T_R0 + T_PULSE and math.isfinite(r) and r > 0]
+            self.ln_pt.set_data([p[0] for p in pts], [p[1] for p in pts])
+        else:
+            self.ln_pt.set_data([], [])
+        super().redraw()
+        xmin = self.ax_p.get_xlim()[0]
+        pw = []  # power = V * mA (mW) from the log, over the plotted window
+        for r in reversed(self.log):
+            if float(r[0]) < xmin:
+                break
+            pw.append((float(r[0]), r[5] * r[6]))
+        self.ln_pw.set_data([p[0] for p in pw], [p[1] for p in pw])
+        sp_w = None
+        if self.src_var.get() == 3 and self.auto_var.get():
+            try:
+                sp_w = float(self.sp_vars[3].get())
+            except ValueError:
+                pass
+        self.ln_sp_w.set_data(*(([xmin, self.ax_p.get_xlim()[1]], [sp_w, sp_w]) if sp_w is not None else ([], [])))
+        if pw:
+            lo_w, hi_w = min([p[1] for p in pw] + ([sp_w] if sp_w is not None else [])), max([p[1] for p in pw] + ([sp_w] if sp_w is not None else []))
+            pad = max(1.0, (hi_w - lo_w) * 0.1)
+            self.ax_w.set_ylim(lo_w - pad, hi_w + pad)
+        lo, hi = self.ax_t.get_ylim()
+        vis = [v for t, v in zip(*self.ln_pt.get_data()) if t >= xmin and math.isfinite(v)] if self.x_pulse else []
+        if vis:
+            self.ax_t.set_ylim(min(lo, min(vis) - 1), max(hi, max(vis) + 1))
+
+    def _build_script_editor(self):  # replaces gui.py's script editor with a results box
+        w = ttk.LabelFrame(self.mid, text="Prediction results")
+        w.pack(side="right", fill="y", padx=(4, 8), pady=4)
+        self.result_text = tk.Text(w, wrap="word", width=38, state="disabled", font=("TkFixedFont", 10))
+        self.result_text.pack(fill="both", expand=True, padx=6, pady=6)
+        self.script_text = tk.Text(self.root)  # never shown; gui.py's save_settings reads it
+
+    def note(self, text):
+        self.result_text.config(state="normal")
+        self.result_text.insert("end", text + "\n")
+        self.result_text.see("end")
+        self.result_text.config(state="disabled")
+
+    def __init__(self, root):
+        super().__init__(root)
+        root.title("Power-controlled prediction test: R(60 C)")
+        self.test = None  # running test: {"phase", "t0"}
+        f = ttk.Frame(root)
+        f.pack(fill="x", padx=8, pady=(0, 6))
+        ttk.Button(f, text="Start prediction test", command=self.start_test).pack(side="left")
+        self.set_var = tk.StringVar(value="60")
+        ttk.Label(f, text="Set to").pack(side="left", padx=(10, 2))
+        ttk.Entry(f, textvariable=self.set_var, width=5).pack(side="left")
+        ttk.Button(f, text="°C  Go", command=self.start_set).pack(side="left", padx=(2, 0))
+        self.test_var = tk.StringVar(value="Prediction test: idle (ALL OFF aborts it)")
+        ttk.Label(f, textvariable=self.test_var).pack(side="left", padx=10)
+
+    def start_set(self):
+        try:
+            temp = float(self.set_var.get())
+        except ValueError:
+            temp = float("nan")
+        if not SET_RANGE[0] <= temp <= SET_RANGE[1]:
+            messagebox.showerror("Set to", f"Enter a temperature from {SET_RANGE[0]:g} to {SET_RANGE[1]:g} C")
+            return
+        self.start_test(temp)
+
+    def start_test(self, set_temp=None):  # set_temp: just hold that temperature, no IR, no recording
+        if not self.ser["esp"]:
+            messagebox.showerror("Test", "Connect the ESP board first")
+            return
+        if set_temp is None and not self.serial_var.get().strip():
+            messagebox.showerror("Test", "Enter the serial no. (sample name)")
+            return
+        if self.script is not None or self.test is not None:
+            messagebox.showerror("Test", "A script or test is already running")
+            return
+        if not self.push_config():  # gains / setpoints for all inputs
+            return
+        self.x_pulse = None
+        self.clear_data()  # time 0 = start of the low-power R0 read
+        self.auto_var.set(False)
+        self.send("auto 0")
+        self.hold("pow", R0_POWER_MW)
+        name = f"set {set_temp:g} C" if set_temp else self.serial_var.get().strip()
+        self.note(f"--- {name}  {datetime.now():%H:%M:%S} ---")
+        self.test = {"phase": "r0", "set": set_temp}
+
+    def hold(self, kind, target):  # power / resistance / IR PID at a setpoint; kind: ir | res | pow
+        s = {"ir": 0, "res": 2, "pow": 3}[kind]
+        self.sp_vars[s].set(f"{target:g}")
+        self.src_var.set(s)
+        self.send(f"sp {s} {target:g}")
+        self.send(f"src {s}")
+        self.send("auto 1")
+        self.auto_var.set(True)
+
+    def rows(self, lo, hi):
+        return [r for r in self.log if lo <= float(r[0]) < hi]
+
+    def abort_test(self, why):
+        if self.test is None:
+            return
+        self.test = None
+        self.auto_var.set(False)
+        self.send("auto 0")
+        self.send("pwm 0")
+        self.test_var.set(f"Prediction test: aborted ({why}), heater off")
+        self.note(f"aborted: {why}\n")
+
+    def stop_script(self, off=False, why="stopped"):
+        self.abort_test("stopped")  # ALL OFF / manual PWM / unchecking PID also end the test
+        super().stop_script(off, why)
+
+    def run_script(self):
+        super().run_script()
+        t = self.test
+        if t is None:
+            return
+        if not self.ser["esp"]:
+            self.abort_test("ESP disconnected")
+            return
+        now = time.time() - self.t0
+        self.test_var.set(f"Prediction test: {t['phase']} ({now:.0f} s)")
+        if t["phase"] == "r0" and now >= T_R0:
+            r0 = mean([r[4] for r in self.rows(T_R0 - 1, T_R0)])
+            if not r0 > 0:
+                self.abort_test(f"no resistance reading at {R0_POWER_MW:g} mW")
+                return
+            t.update(phase="pulse", r0=r0)
+            self.hold("pow", P_PULSE_MW)
+        elif t["phase"] == "pulse" and now >= T_R0 + T_PULSE:
+            feat = pulse_features(self.rows(T_R0, T_R0 + T_PULSE))
+            if feat is None or feat[0] <= 0:
+                self.abort_test("no usable resistance data in the pulse")
+                return
+            drdt, _, p_meas = feat
+            p = P_PULSE_MW  # constant-power pulse: P in x is the setpoint
+            r0 = t["r0"]  # read at the low-power setpoint, not the first pulse sample
+            pred = predict_r(t["set"] if t["set"] is not None else 60, drdt, r0, p)
+            if not R_OK[0] < pred < R_OK[1]:
+                self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
+                return
+            t.update(phase="rhold", drdt=drdt, p=p, p_meas=p_meas, pred=pred)
+            self.x_pulse = drdt * r0 / p
+            self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
+                      f"Power set   {p:8.1f} mW (measured {p_meas:.1f})\ndR/dt*R0/P   {drdt * r0 / p:8.2f}\n"
+                      f"Predicted R @{t['set'] if t['set'] is not None else 60:g}C {pred:5.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
+            self.hold("res", pred)
+        elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:
+            if t["set"] is not None:
+                self.test = None
+                self.auto_var.set(False)
+                self.send("auto 0")
+                self.send("pwm 0")
+                self.note("done, heater off\n")
+                self.test_var.set(f"Set to {t['set']:g} C: done, heater off")
+                return
+            last = self.rows(now - 2, now)  # last 2 s of the resistance hold
+            t.update(phase="ir60", ir_pred=mean([r[2] for r in last]))
+            self.note(f"at predicted R:  IR {t['ir_pred']:.1f} C")
+            self.set_ir(60.0, T_IR60)
+        elif t["phase"] == "ir60" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60:
+            t.update(phase="ir70", actual60=mean([r[4] for r in self.rows(now - T_AVG, now)]))
+            self.note(f"Actual R60      {t['actual60']:7.1f} ohm\nPred - actual  {t['pred'] - t['actual60']:+7.1f} ohm "
+                      f"({(t['pred'] / t['actual60'] - 1) * 100:+.1f} %)")
+            self.set_ir(70.0, T_IR70)
+        elif t["phase"] == "ir70" and now >= T_R0 + T_PULSE + T_RHOLD + T_IR60 + T_IR70:
+            self.finish_test(now)
+
+    def set_ir(self, target, secs):  # target in real C
+        self.note(f"holding IR {target:g} C for {secs:.0f} s ...")
+        self.sp_vars[0].set(f"{target:g}")
+        self.src_var.set(0)
+        self.send(f"sp 0 {target:g}")
+        self.send("src 0")
+        self.send("auto 1")
+
+    def finish_test(self, now):
+        t, self.test = self.test, None
+        actual70 = mean([r[4] for r in self.rows(now - T_AVG, now)])
+        self.auto_var.set(False)
+        self.send("auto 0")
+        self.send("pwm 0")
+        os.makedirs(gui.OUT_DIR, exist_ok=True)
+        new = not os.path.exists(PRED_CSV)
+        with open(PRED_CSV, "a", newline="") as f:
+            w = csv.writer(f)
+            if new:
+                w.writerow(PRED_HEADER)
+            w.writerow([self.serial_var.get().strip(), f"{t['drdt']:.4f}", f"{t['p']:.3f}", f"{t['r0']:.3f}",
+                        f"{t['pred']:.3f}", f"{t['actual60']:.3f}", f"{actual70:.3f}", f"{t['ir_pred']:.2f}", f"{t['p_meas']:.1f}"])
+        self.save_outputs()
+        self.note(f"Actual R70      {actual70:7.1f} ohm\n")
+        self.test_var.set(f"Prediction test done: predicted R60 {t['pred']:.1f}, actual R60 {t['actual60']:.1f}, "
+                          f"actual R70 {actual70:.1f} ohm")
+
+
+if __name__ == "__main__":
+    # synthetic pulse: R rises 100 ohm/s from 300 ohm, V*mA = 300 mW
+    rows = [[f"{i * 0.2:.1f}", "", 30, 30, 300 + 100 * i * 0.2, 10.0, 30.0, 100, 0, 0] for i in range(10)]
+    s, r0, p = pulse_features(rows)
+    assert abs(s - 100) < 1e-6 and r0 == 300 and abs(p - 300) < 1e-9
+    assert abs(predict_r(ir_real(60), 100, 300, 300) - (102.68 * math.log(100) + 78.13)) < 0.05
+    assert abs(predict_r(ir_real(70), 100, 300, 300) - (102.99 * math.log(100) + 151.90)) < 0.05
+    assert abs(ir_real(ir_sensor(45.0)) - 45.0) < 1e-9 and abs(ir_real(60) - 69.39) < 1e-9
+    d = parse_data_real("not a data line")
+    assert d is None
+    assert abs(predict_temp(predict_r(65, 100, 300, 300), 100) - 65) < 1e-9  # inverse
+    assert pulse_features(rows[:3]) is None and math.isnan(mean([float("nan")]))
+    root = tk.Tk()
+    TestApp(root)
+    root.mainloop()
