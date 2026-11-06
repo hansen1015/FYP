@@ -12,6 +12,7 @@ then one row is appended to output/gather_data_pwm.csv and the time-series CSV +
 
 "Set to [temp] C" + Go runs R0 + pulse + prediction, then holds the predicted resistance for 20 s with the
 resistance PID: no IR, nothing recorded, heater off at the end.
+"Go, then hold P" does the same for 3 s, averages the power of the last 1 s, then holds that power with the power PID for 5 s.
 
 Prediction (Set to only): ln fits of R against x = dR/dt * R0 / P, joined linearly in real T:
   R(T) = (100.99 + 0.02436 T) * ln(x) + (-319.30 + 5.727 T), T = (R - 100.99 ln(x) + 319.30) / (0.02436 ln(x) + 5.727)
@@ -60,6 +61,7 @@ SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0
 T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
 R0_PWM = 1.0      # R0 is read at this PWM %
 PULSE_PWM = 100.0  # PWM % of the dR/dt pulse; P in x = dR/dt * R0 / P is the mean measured power over it
+T_RH_P, T_PH = 3.0, 5.0  # Hold P button: resistance hold, then constant-power hold (s)
 T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 SET_RANGE = (30.0, 80.0)  # allowed temperatures for "Set to" (C)
@@ -246,6 +248,7 @@ class App:
         ttk.Label(f, text="Set to").pack(side="left", padx=(10, 2))
         ttk.Entry(f, textvariable=self.set_var, width=5).pack(side="left")
         ttk.Button(f, text="°C  Go", command=self.start_set).pack(side="left", padx=(2, 0))
+        ttk.Button(f, text="°C  Go, then hold P", command=lambda: self.start_set(True)).pack(side="left", padx=(6, 0))
         self.test_var = tk.StringVar(value="Idle (ALL OFF aborts a run)")
         ttk.Label(f, textvariable=self.test_var).pack(side="left", padx=10)
 
@@ -380,7 +383,7 @@ class App:
         self.auto_var.set(True)
 
     # ---------- test ----------
-    def start_set(self):
+    def start_set(self, hold_p=False):
         try:
             temp = float(self.set_var.get())
         except ValueError:
@@ -388,9 +391,9 @@ class App:
         if not SET_RANGE[0] <= temp <= SET_RANGE[1]:
             messagebox.showerror("Set to", f"Enter a temperature from {SET_RANGE[0]:g} to {SET_RANGE[1]:g} C")
             return
-        self.start_test(temp)
+        self.start_test(temp, hold_p)
 
-    def start_test(self, set_temp=None):  # set_temp: just hold that temperature, no IR, no recording
+    def start_test(self, set_temp=None, hold_p=False):  # set_temp: just hold that temperature, no IR, no recording
         if not self.ser:
             messagebox.showerror("Test", "Connect the ESP board first")
             return
@@ -407,7 +410,7 @@ class App:
         self.set_pwm(R0_PWM)
         name = f"set {set_temp:g} C" if set_temp is not None else self.serial_var.get().strip()
         self.note(f"--- {name}  {datetime.now():%H:%M:%S} ---")
-        self.test = {"phase": "r0", "set": set_temp}
+        self.test = {"phase": "r0", "set": set_temp, "hold_p": hold_p, "rlen": T_RH_P if hold_p else T_RHOLD}
 
     def rows(self, lo, hi):
         return [r for r in self.log if lo <= float(r[0]) < hi]
@@ -458,9 +461,24 @@ class App:
                 self.abort_test(f"predicted R {pred:.0f} ohm is outside {R_OK}")
                 return
             t.update(phase="rhold", pred=pred)
-            self.note(f"Predicted R @{t['set']:g}C {pred:5.1f} ohm\nholding R for {T_RHOLD:.0f} s ...")
+            self.note(f"Predicted R @{t['set']:g}C {pred:5.1f} ohm\nholding R for {t['rlen']:.0f} s ...")
             self.hold("res", pred)
-        elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + T_RHOLD:  # Set to: done
+        elif t["phase"] == "rhold" and t["hold_p"] and now >= T_R0 + T_PULSE + t["rlen"]:
+            p_hold = mean([r[6] for r in self.rows(now - 1, now)])  # power over the last 1 s of the R hold
+            if not p_hold > 0:
+                self.abort_test("no power reading in the R hold")
+                return
+            t.update(phase="phold", p_hold=p_hold, t_ph=now)
+            self.note(f"Power @R hold  {p_hold:7.1f} mW\nholding that power for {T_PH:.0f} s ...")
+            self.hold("pow", p_hold)
+        elif t["phase"] == "phold" and now >= t["t_ph"] + T_PH:
+            self.test = None
+            self.auto_var.set(False)
+            self.send("auto 0")
+            self.send("pwm 0")
+            self.note("done, heater off\n")
+            self.test_var.set(f"Hold P {t['p_hold']:.0f} mW: done, heater off")
+        elif t["phase"] == "rhold" and now >= T_R0 + T_PULSE + t["rlen"]:  # Set to: done
             self.test = None
             self.auto_var.set(False)
             self.send("auto 0")
