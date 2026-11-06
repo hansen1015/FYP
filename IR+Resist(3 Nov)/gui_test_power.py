@@ -5,7 +5,7 @@ The pulse and the PIDs are in PWM: the IR and resistance PIDs output a PWM %. Th
 (2, mW): its column stays in the control box for manual use, the tests do not use it.
 
 "Gather data" (needs a serial no.):
-  0-3 s    heater R0_PWM = 5 % PWM: R0 = mean R of the last second
+  0-3 s    heater R0_PWM = 1 % PWM: R0 = mean R of the last second
   3-5 s    heater PULSE_PWM = 100 % PWM for 2 s: measure dR/dt and the mean power P (mW)
   then     IR PID holds 50, 60 and 70 C for 20 s each; actual R(T) = mean R of the last 5 s of each hold
 then one row is appended to output/gather_data_pwm.csv and the time-series CSV + png of the run are saved. No prediction is made.
@@ -58,7 +58,7 @@ SRC_NAMES = ["IR temp (°C)", "Resistance (Ω)", "Power (mW)"]
 SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0.5", "0")]  # SP, Kp, Ki, Kd
 
 T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
-R0_PWM = 5.0      # R0 is read at this PWM %
+R0_PWM = 1.0      # R0 is read at this PWM %
 PULSE_PWM = 100.0  # PWM % of the dR/dt pulse; P in x = dR/dt * R0 / P is the mean measured power over it
 T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
