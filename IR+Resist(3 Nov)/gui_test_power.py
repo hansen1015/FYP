@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Power-controlled data gathering + R(T) prediction check for the ESP board (esp_board/ in this folder). One file, no thermocouple.
-Nothing is driven by a typed PWM %: every phase is a PID setpoint (PID inputs: 0 IR, 1 resistance, 2 power).
+Data gathering + R(T) prediction check for the ESP board (esp_board/ in this folder). One file, no thermocouple.
+The pulse and the PIDs are in PWM: the IR and resistance PIDs output a PWM %. The firmware also has a power PID input
+(2, mW): its column stays in the control box for manual use, the tests do not use it.
 
 "Gather data" (needs a serial no.):
-  0-3 s    power PID at R0_POWER_MW = 20 mW: R0 = mean R of the last second
-  3-5 s    power PID at P_PULSE_MW = 800 mW for 2 s: measure dR/dt (the measured mean power is only logged)
+  0-3 s    heater R0_PWM = 5 % PWM: R0 = mean R of the last second
+  3-5 s    heater PULSE_PWM = 100 % PWM for 2 s: measure dR/dt and the mean power P (mW)
   then     IR PID holds 50, 60 and 70 C for 20 s each; actual R(T) = mean R of the last 5 s of each hold
-then one row is appended to output/gather_data.csv and the time-series CSV + png of the run are saved. No prediction is made.
+then one row is appended to output/gather_data_pwm.csv and the time-series CSV + png of the run are saved. No prediction is made.
 
 "Set to [temp] C" + Go runs R0 + pulse + prediction, then holds the predicted resistance for 20 s with the
 resistance PID: no IR, nothing recorded, heater off at the end.
@@ -15,8 +16,7 @@ resistance PID: no IR, nothing recorded, heater off at the end.
 Prediction (Set to only): ln fits of R against x = dR/dt * R0 / P, joined linearly in real T:
   R(T) = (100.99 + 0.02436 T) * ln(x) + (-319.30 + 5.727 T), T = (R - 100.99 ln(x) + 319.30) / (0.02436 ln(x) + 5.727)
 The temperature panel shows this predicted T (dashed) from the live resistance once the pulse has set x; it uses no IR.
-NOTE: those constants were measured with 100 % PWM pulses (P = mean measured power), not this constant-power pulse:
-treat the predictions as a placeholder and refit on gather_data.csv rows recorded with this GUI.
+These constants were measured with exactly this protocol (5 % PWM R0, 100 % PWM pulse, P = mean measured pulse power).
 
 IR temperature: real = 1.288 * IR_sensor - 7.89 (R2 0.995) is applied to every IR reading (readout, plot, CSV); the IR
 setpoint typed here is real C and converted back to the sensor scale before it goes to the board (whose PID runs on the raw sensor).
@@ -47,9 +47,9 @@ UPDATE_MS = 200
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "output")
 SETTINGS = os.path.join(HERE, "gui_test_settings.json")
-DATA_CSV = os.path.join(OUT_DIR, "gather_data.csv")
+DATA_CSV = os.path.join(OUT_DIR, "gather_data_pwm.csv")  # not gather_data.csv: that one has the constant-power columns
 IR_TEMPS = (50.0, 60.0, 70.0)  # real C, held in this order by Gather data
-DATA_HEADER = ["sample", "dR_dt_ohm_s", "pulse_power_setpoint_mW", "initial_resistance_ohm", "pulse_power_measured_mW",
+DATA_HEADER = ["sample", "dR_dt_ohm_s", "pulse_pwm_pct", "initial_resistance_ohm", "pulse_power_measured_mW",
                *(f"actual_R{t:g}_ohm" for t in IR_TEMPS)]
 CSV_HEADER = ["serial_number", "time_s", "timestamp", "ir_C", "resistance_ohm", "voltage_V", "current_mA",
               "power_mW", "pwm_pct", "pid_auto", "pid_input"]
@@ -58,8 +58,8 @@ SRC_NAMES = ["IR temp (°C)", "Resistance (Ω)", "Power (mW)"]
 SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0.5", "0")]  # SP, Kp, Ki, Kd
 
 T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
-R0_POWER_MW = 20.0  # R0 is read with the power PID at this setpoint
-P_PULSE_MW = 800.0  # constant power of the dR/dt pulse, also the P in x = dR/dt * R0 / P
+R0_PWM = 5.0      # R0 is read at this PWM %
+PULSE_PWM = 100.0  # PWM % of the dR/dt pulse; P in x = dR/dt * R0 / P is the mean measured power over it
 T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 SET_RANGE = (30.0, 80.0)  # allowed temperatures for "Set to" (C)
@@ -365,6 +365,11 @@ class App:
         self.send("auto 0")
         self.send("pwm 0")
 
+    def set_pwm(self, pct):  # fixed PWM %, PID off
+        self.auto_var.set(False)
+        self.send("auto 0")
+        self.send(f"pwm {pct:g}")
+
     def hold(self, kind, target):  # PID on one input at a setpoint; kind: ir | res | pow
         s = SRC[kind]
         self.sp_vars[s].set(f"{target:g}")
@@ -398,10 +403,8 @@ class App:
         if not self.push_config():  # gains / setpoints for all inputs
             return
         self.x_pulse = None
-        self.clear_data()  # time 0 = start of the low-power R0 read
-        self.auto_var.set(False)
-        self.send("auto 0")
-        self.hold("pow", R0_POWER_MW)
+        self.clear_data()  # time 0 = start of the low-PWM R0 read
+        self.set_pwm(R0_PWM)
         name = f"set {set_temp:g} C" if set_temp is not None else self.serial_var.get().strip()
         self.note(f"--- {name}  {datetime.now():%H:%M:%S} ---")
         self.test = {"phase": "r0", "set": set_temp}
@@ -431,22 +434,21 @@ class App:
         if t["phase"] == "r0" and now >= T_R0:
             r0 = mean([r[3] for r in self.rows(T_R0 - 1, T_R0)])
             if not r0 > 0:
-                self.abort_test(f"no resistance reading at {R0_POWER_MW:g} mW")
+                self.abort_test(f"no resistance reading at {R0_PWM:g} % PWM")
                 return
             t.update(phase="pulse", r0=r0)
-            self.hold("pow", P_PULSE_MW)
+            self.set_pwm(PULSE_PWM)
         elif t["phase"] == "pulse" and now >= T_R0 + T_PULSE:
             feat = pulse_features(self.rows(T_R0, T_R0 + T_PULSE))
             if feat is None or feat[0] <= 0:
                 self.abort_test("no usable resistance data in the pulse")
                 return
-            drdt, _, p_meas = feat
-            p = P_PULSE_MW  # constant-power pulse: P in x is the setpoint
-            r0 = t["r0"]  # read at the R0 power setpoint, not the first pulse sample
+            drdt, _, p = feat  # p: mean measured power over the pulse
+            r0 = t["r0"]  # read at the R0 PWM, not the first pulse sample
             self.x_pulse = drdt * r0 / p
-            t.update(drdt=drdt, p=p, p_meas=p_meas)
+            t.update(drdt=drdt, p=p)
             self.note(f"dR/dt        {drdt:8.2f} ohm/s\nR0           {r0:8.2f} ohm\n"
-                      f"Power set    {p:8.1f} mW (measured {p_meas:.1f})\ndR/dt*R0/P   {self.x_pulse:8.2f}")
+                      f"Power @{PULSE_PWM:g}%   {p:8.1f} mW\ndR/dt*R0/P   {self.x_pulse:8.2f}")
             if t["set"] is None:  # Gather data: straight to the IR holds
                 t.update(phase="ir", k=0, actual=[])
                 self.set_ir(IR_TEMPS[0], T_IR)
@@ -490,8 +492,8 @@ class App:
             w = csv.writer(f)
             if new:
                 w.writerow(DATA_HEADER)
-            w.writerow([self.serial_var.get().strip(), f"{t['drdt']:.4f}", f"{t['p']:.3f}", f"{t['r0']:.3f}",
-                        f"{t['p_meas']:.1f}", *(f"{r:.3f}" for r in t["actual"])])
+            w.writerow([self.serial_var.get().strip(), f"{t['drdt']:.4f}", f"{PULSE_PWM:g}", f"{t['r0']:.3f}",
+                        f"{t['p']:.1f}", *(f"{r:.3f}" for r in t["actual"])])
         self.save_outputs()
         self.note("")
         self.test_var.set("Gather data done: " + ", ".join(f"R{T:g} {r:.1f}" for T, r in zip(IR_TEMPS, t["actual"])) + " ohm")
