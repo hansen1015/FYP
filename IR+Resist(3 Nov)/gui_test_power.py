@@ -6,13 +6,13 @@ The pulse and the PIDs are in PWM: the IR and resistance PIDs output a PWM %. Th
 
 "Gather data" (needs a serial no.):
   0-3 s    heater R0_PWM = 1 % PWM: R0 = mean R of the last second
-  3-4.5 s   heater PULSE_PWM = 100 % PWM for 1.5 s: measure dR/dt and the mean power P (mW)
+  3-5 s     heater PULSE_PWM = 100 % PWM for 2 s: measure dR/dt and the mean power P (mW)
   then     IR PID holds 50, 60 and 70 C for 20 s each; actual R(T) = mean R of the last 5 s of each hold
 then one row is appended to output/gather_data_pwm.csv and the time-series CSV + png of the run are saved. No prediction is made.
 
 "Set to [temp] C" + Go runs R0 + pulse + prediction, then holds the predicted resistance for 20 s with the
 resistance PID: no IR, nothing recorded, heater off at the end.
-"Go, then hold P" does the same for 5 s, averages the power of the last 2 s, then holds that power with the power PID for 5 s.
+"Go, then hold P" holds R until it is steady (min 5 s, R within 1 ohm over 2 s, abort after 30 s), averages the power of the last 2 s, then holds that power with the power PID for 5 s.
 
 Prediction (Set to only): ln fits of R against x = dR/dt * R0 / P, joined linearly in real T:
   R(T) = (100.99 + 0.02436 T) * ln(x) + (-319.30 + 5.727 T), T = (R - 100.99 ln(x) + 319.30) / (0.02436 ln(x) + 5.727)
@@ -58,10 +58,11 @@ SRC = {"ir": 0, "res": 1, "pow": 2}  # PID inputs in the firmware
 SRC_NAMES = ["IR temp (°C)", "Resistance (Ω)", "Power (mW)"]
 SRC_DEFAULTS = [("0", "5", "0.05", "0"), ("0", "0.5", "0", "0"), ("0", "0.3", "0.5", "0")]  # SP, Kp, Ki, Kd
 
-T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 1.5, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
+T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOLD is for Set to only
 R0_PWM = 1.0      # R0 is read at this PWM %
 PULSE_PWM = 100.0  # PWM % of the dR/dt pulse; P in x = dR/dt * R0 / P is the mean measured power over it
-T_RH_P, T_PH, T_PAVG = 5.0, 5.0, 2.0  # Hold P button: resistance hold, then constant-power hold (s)
+T_RH_P, T_RH_MAX, T_PH, T_PAVG = 5.0, 30.0, 5.0, 2.0  # Hold P button: min / max resistance hold, power hold, averaging window (s)
+R_STEADY = 1.0  # R is steady when it varies by less than this (ohm) over the last T_PAVG s
 T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
 SET_RANGE = (30.0, 80.0)  # allowed temperatures for "Set to" (C)
@@ -463,7 +464,13 @@ class App:
             t.update(phase="rhold", pred=pred)
             self.note(f"Predicted R @{t['set']:g}C {pred:5.1f} ohm\nholding R for {t['rlen']:.0f} s ...")
             self.hold("res", pred)
-        elif t["phase"] == "rhold" and t["hold_p"] and now >= T_R0 + T_PULSE + t["rlen"]:
+        elif t["phase"] == "rhold" and t["hold_p"]:
+            held = now - (T_R0 + T_PULSE)
+            rs = [r[3] for r in self.rows(now - T_PAVG, now)]
+            if held < t["rlen"] or not rs or max(rs) - min(rs) >= R_STEADY:  # wait for steady R
+                if held >= T_RH_MAX:
+                    self.abort_test(f"R not steady after {T_RH_MAX:.0f} s")
+                return
             p_hold = mean([r[6] for r in self.rows(now - T_PAVG, now)])  # power over the last T_PAVG s of the R hold
             if not p_hold > 0:
                 self.abort_test("no power reading in the R hold")
