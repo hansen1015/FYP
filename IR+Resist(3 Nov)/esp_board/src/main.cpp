@@ -80,7 +80,7 @@ void setHeater(float pct) {
 }
 
 void resetPid(Pid &p) {
-  p.integral = 0;
+  p.integral = (p.ki > 0) ? 50.0f / p.ki : 0;  // start with the I term at mid range (50 %), not 0
   p.hasLast = false;
 }
 
