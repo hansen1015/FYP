@@ -12,7 +12,7 @@ then one row is appended to output/gather_data_pwm.csv and the time-series CSV +
 
 "Set to [temp] C" + Go runs R0 + pulse + prediction, then holds the predicted resistance for 20 s with the
 resistance PID: no IR, nothing recorded, heater off at the end.
-"J, then W  Record": 100 % PWM until J joules (integrated measured power) are delivered, then the power PID at W watts for 30 s, heater off, CSV + png saved.
+"mJ, then mW  Record": 100 % PWM until the mJ are delivered (integrated measured power), then the power PID at the mW for 30 s, heater off, CSV + png saved.
 "Go, then hold P" holds R until it is steady (min 5 s, R within 1 ohm over 2 s, abort after 30 s), averages the power of the last 2 s, then holds that power with the power PID for 5 s.
 
 Prediction (Set to only): ln fits of R against x = dR/dt * R0 / P, joined linearly in real T:
@@ -63,7 +63,7 @@ T_R0, T_PULSE, T_RHOLD, T_IR = 3.0, 2.0, 20.0, 20.0  # phase lengths (s); T_RHOL
 R0_PWM = 1.0      # R0 is read at this PWM %
 PULSE_PWM = 100.0  # PWM % of the dR/dt pulse; P in x = dR/dt * R0 / P is the mean measured power over it
 T_RH_P, T_RH_MAX, T_PH, T_PAVG = 5.0, 30.0, 5.0, 2.0  # Hold P button: min / max resistance hold, power hold, averaging window (s)
-T_JW_HEAT_MAX, T_JW_HOLD = 60.0, 30.0  # Joule button: give up on the energy after / hold the power for (s)
+T_JW_HEAT_MAX, T_JW_HOLD = 60.0, 30.0  # mJ button: give up on the energy after / hold the power for (s)
 R_STEADY = 1.0  # R is steady when it varies by less than this (ohm) over the last T_PAVG s
 T_AVG = 5.0  # actual R = mean over the last T_AVG s of each IR hold
 R_OK = (200.0, 800.0)  # sanity band for the predicted resistance (ohm)
@@ -252,11 +252,11 @@ class App:
         ttk.Entry(f, textvariable=self.set_var, width=5).pack(side="left")
         ttk.Button(f, text="°C  Go", command=self.start_set).pack(side="left", padx=(2, 0))
         ttk.Button(f, text="°C  Go, then hold P", command=lambda: self.start_set(True)).pack(side="left", padx=(6, 0))
-        self.j_var, self.w_var = tk.StringVar(value="20"), tk.StringVar(value="0.5")
+        self.j_var, self.w_var = tk.StringVar(value="20000"), tk.StringVar(value="500")
         ttk.Entry(f, textvariable=self.j_var, width=5).pack(side="left", padx=(14, 2))
-        ttk.Label(f, text="J, then").pack(side="left")
+        ttk.Label(f, text="mJ, then").pack(side="left")
         ttk.Entry(f, textvariable=self.w_var, width=5).pack(side="left", padx=2)
-        ttk.Button(f, text="W  Record", command=self.start_jw).pack(side="left")
+        ttk.Button(f, text="mW  Record", command=self.start_jw).pack(side="left")
         self.test_var = tk.StringVar(value="Idle (ALL OFF aborts a run)")
         ttk.Label(f, textvariable=self.test_var).pack(side="left", padx=10)
 
@@ -391,13 +391,13 @@ class App:
         self.auto_var.set(True)
 
     # ---------- test ----------
-    def start_jw(self):  # 100 % PWM until J joules were delivered, then the power PID at W watts; saved at the end
+    def start_jw(self):  # 100 % PWM until J millijoules were delivered, then the power PID at W milliwatts; saved at the end
         try:
             joule, watt = float(self.j_var.get()), float(self.w_var.get())
         except ValueError:
             joule = watt = -1
-        if not (joule > 0 and 0 < watt <= 3):
-            messagebox.showerror("Record", "Enter joules > 0 and watts from 0 to 3")
+        if not (joule > 0 and 0 < watt <= 3000):
+            messagebox.showerror("Record", "Enter mJ > 0 and mW from 0 to 3000")
             return
         if not self.ser:
             messagebox.showerror("Record", "Connect the ESP board first")
@@ -410,7 +410,7 @@ class App:
         self.x_pulse = None
         self.clear_data()
         self.set_pwm(PULSE_PWM)
-        self.note(f"--- {joule:g} J at {PULSE_PWM:g} % PWM, then {watt:g} W  {datetime.now():%H:%M:%S} ---")
+        self.note(f"--- {joule:g} mJ at {PULSE_PWM:g} % PWM, then {watt:g} mW  {datetime.now():%H:%M:%S} ---")
         self.test = {"phase": "heat", "joule": joule, "watt": watt}
 
     def start_set(self, hold_p=False):
@@ -473,13 +473,13 @@ class App:
             self.set_pwm(PULSE_PWM)
         elif t["phase"] == "heat":
             rows = self.rows(0, now + 1)
-            e = sum((float(b[6]) + float(a[6])) / 2 * (float(b[0]) - float(a[0])) / 1000 for a, b in zip(rows, rows[1:]))
+            e = sum((float(b[6]) + float(a[6])) / 2 * (float(b[0]) - float(a[0])) for a, b in zip(rows, rows[1:]))
             if e >= t["joule"]:
-                self.note(f"{e:.1f} J delivered after {now:.1f} s, holding {t['watt']:g} W for {T_JW_HOLD:.0f} s ...")
+                self.note(f"{e:.0f} mJ delivered after {now:.1f} s, holding {t['watt']:g} mW for {T_JW_HOLD:.0f} s ...")
                 t.update(phase="watt", t_w=now)
-                self.hold("pow", t["watt"] * 1000)
+                self.hold("pow", t["watt"])
             elif now >= T_JW_HEAT_MAX:
-                self.abort_test(f"only {e:.1f} J after {T_JW_HEAT_MAX:.0f} s")
+                self.abort_test(f"only {e:.0f} mJ after {T_JW_HEAT_MAX:.0f} s")
         elif t["phase"] == "watt" and now >= t["t_w"] + T_JW_HOLD:
             self.test = None
             self.auto_var.set(False)
@@ -487,7 +487,7 @@ class App:
             self.send("pwm 0")
             self.save_outputs()
             self.note("done, heater off, saved\n")
-            self.test_var.set(f"{t['joule']:g} J + {t['watt']:g} W: done, saved")
+            self.test_var.set(f"{t['joule']:g} mJ + {t['watt']:g} mW: done, saved")
         elif t["phase"] == "pulse" and now >= T_R0 + T_PULSE:
             feat = pulse_features(self.rows(T_R0, T_R0 + T_PULSE))
             if feat is None or feat[0] <= 0:
